@@ -335,7 +335,8 @@ async function cmdDoctor(): Promise<void> {
   const st = await exec("claude", ["auth", "status"]).catch(() => null);
   const claudeIn = !!st && !/"loggedIn":\s*false/.test(st.stdout);
   check(claudeIn, "Claude Code logged in (engine: claude-code, uses your Claude plan)", st ? "run: claude auth login" : "install Claude Code");
-  check(!!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN), "Anthropic API key (engine: api, optional)", "only needed for --engine api");
+  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) console.log("ok    Anthropic API key (engine: api)");
+  else console.log("info  No Anthropic API key. That's fine: it's only needed for --engine api");
   if (claudeIn) {
     const version = (await exec("claude", ["--version"])).stdout.trim();
     if (cachedCanaryPass(version)) console.log(`ok    Claude Code ${version} isolation canary (passed earlier)`);
