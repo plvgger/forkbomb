@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
 import { mkdir, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
-import { PKG_ROOT, exec, hydraHome } from "../util.js";
+import { PKG_ROOT, appHome, exec } from "../util.js";
 
 export interface ForkResult {
   dst: string;
   ms: number;
 }
 
-/** Turns one workspace into many. Swap the implementation, keep the heads. */
+/** Turns one workspace into many. Swap the implementation, keep the forks. */
 export interface Forker {
   readonly name: string;
   fork(src: string, dsts: string[]): Promise<ForkResult[]>;
@@ -38,7 +38,7 @@ export class ApfsForker implements Forker {
   }
 }
 
-/** Plain recursive copy. The honest baseline in `hydra bench`, and the fallback off APFS. */
+/** Plain recursive copy. The honest baseline in `forkbomb bench`, and the fallback off APFS. */
 export class CopyForker implements Forker {
   readonly name = "copy";
   async fork(src: string, dsts: string[]): Promise<ForkResult[]> {
@@ -53,10 +53,10 @@ export class CopyForker implements Forker {
   }
 }
 
-/** Compile the clonefile helper once per Hydra version and cache it under ~/.hydra/bin. */
+/** Compile the clonefile helper once per helper source version and cache it under <home>/bin. */
 async function ensureHelper(): Promise<string> {
   const src = join(PKG_ROOT, "native", "hclone.c");
-  const binDir = join(hydraHome(), "bin");
+  const binDir = join(appHome(), "bin");
   const srcMtime = Math.floor((await stat(src)).mtimeMs);
   const bin = join(binDir, `hclone-${srcMtime}`);
   if (existsSync(bin)) return bin;

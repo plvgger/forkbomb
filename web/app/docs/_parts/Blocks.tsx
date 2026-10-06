@@ -133,3 +133,72 @@ export function Synopsis({ children }: { children: ReactNode }) {
     </p>
   );
 }
+
+/** API endpoint reference block: method chip, path, auth, then its details. */
+export function Endpoint({
+  id,
+  method,
+  path,
+  auth,
+  summary,
+  children,
+}: {
+  id: string;
+  method: "GET" | "POST";
+  path: string;
+  auth: string;
+  summary: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <article className={s.endpoint} aria-labelledby={`${id}-path`}>
+      <header className={s.endpointHead}>
+        <span className={s.method} data-method={method}>
+          {method}
+        </span>
+        <h3 id={id} className={s.endpointPath}>
+          <code id={`${id}-path`}>{path}</code>
+          <a className={s.anchor} href={`#${id}`} aria-label={`Link to ${method} ${path}`}>
+            #
+          </a>
+        </h3>
+        <span className={s.endpointAuth}>{auth}</span>
+      </header>
+      <div className={s.endpointBody}>
+        <p className={s.endpointSummary}>{summary}</p>
+        {children}
+      </div>
+    </article>
+  );
+}
+
+/** Error code table: code, HTTP status, meaning. */
+export function ErrorTable({ caption, rows }: { caption: string; rows: { code: string; status: number; meaning: string }[] }) {
+  return (
+    <RefTable
+      caption={caption}
+      head={["Code", "HTTP", "Meaning"]}
+      mono={[0, 1]}
+      rows={rows.map((r) => [r.code, String(r.status), r.meaning])}
+    />
+  );
+}
+
+/** Numbered flow with mono step numbers (burn steps, hosted setup). */
+export function Flow({ label, steps }: { label: string; steps: { title: string; body: ReactNode }[] }) {
+  return (
+    <ol className={s.flowSteps} aria-label={label}>
+      {steps.map((st, i) => (
+        <li key={st.title} className={s.flowStep}>
+          <span className={s.flowNum} aria-hidden="true">
+            {String(i + 1).padStart(2, "0")}
+          </span>
+          <div className={s.flowText}>
+            <h4 className={s.flowTitle}>{st.title}</h4>
+            <div className={s.flowBody}>{st.body}</div>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hydra</title>
+  <title>Forkbomb</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,7 +13,7 @@
         <path d="M16 29V17M16 17C16 11 9 11 6 5M16 17C16 11 23 11 26 5M16 17V4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
         <circle cx="6" cy="5" r="2.4" fill="currentColor"/><circle cx="16" cy="4" r="2.4" fill="currentColor"/><circle cx="26" cy="5" r="2.4" fill="currentColor"/>
       </svg>
-      <span class="word">HYDRA</span>
+      <span class="word">FORKBOMB</span>
     </div>
     <div class="status"><span id="status" class="pill idle">WAITING</span></div>
     <div class="meta">
@@ -29,10 +29,10 @@
   </section>
 
   <section class="tiles">
-    <div class="tile"><span class="k">FORK</span><span class="v" id="tFork">—</span><span class="s" id="tForkS">per head</span></div>
-    <div class="tile"><span class="k">LOGICAL</span><span class="v" id="tLogical">—</span><span class="s" id="tLogicalS">across all heads</span></div>
+    <div class="tile"><span class="k">FORK</span><span class="v" id="tFork">—</span><span class="s" id="tForkS">per fork</span></div>
+    <div class="tile"><span class="k">LOGICAL</span><span class="v" id="tLogical">—</span><span class="s" id="tLogicalS">across all forks</span></div>
     <div class="tile"><span class="k">PHYSICAL</span><span class="v" id="tPhysical">—</span><span class="s">extra disk used</span></div>
-    <div class="tile"><span class="k">ISOLATION</span><span class="v" id="tSandbox">—</span><span class="s" id="tSandboxS">per head</span></div>
+    <div class="tile"><span class="k">ISOLATION</span><span class="v" id="tSandbox">—</span><span class="s" id="tSandboxS">per fork</span></div>
   </section>
 
   <main class="stage">
@@ -43,7 +43,7 @@
     </div>
     <aside class="side">
       <div class="panel" id="winnerPanel" hidden>
-        <div class="panelHead"><span class="label">SURVIVOR</span><span id="winnerId"></span></div>
+        <div class="panelHead"><span class="label">EXIT 0</span><span id="winnerId"></span></div>
         <p id="winnerSummary" class="winnerSummary"></p>
         <pre id="diff" class="diff"></pre>
       </div>

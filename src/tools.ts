@@ -13,7 +13,7 @@ export const HEAD_TOOLS = [
 /** Every head sees the same virtual root, so all heads share one cached prompt prefix. */
 export const VIRTUAL_ROOT = "/workspace";
 
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", ".next", "__pycache__", ".venv", "venv", ".hydra-runs"]);
+const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", ".next", "__pycache__", ".venv", "venv", ".forkbomb-runs", ".hydra-runs"]);
 const MAX_VIEW_CHARS = 24_000;
 
 export interface ToolOutcome {
@@ -82,7 +82,7 @@ export class Workspace {
     const r = relative(this.rootReal, abs);
     if (r === ".." || r.startsWith(`..${sep}`) || isAbsolute(r)) throw new ToolError(`path escapes the workspace: ${original}`);
     const lower = r.toLowerCase();
-    if (lower === ".git" || lower.startsWith(`.git${sep}`)) throw new ToolError(".git is read-only for heads");
+    if (lower === ".git" || lower.startsWith(`.git${sep}`)) throw new ToolError(".git is read-only for forks");
   }
 
   display(abs: string): string {

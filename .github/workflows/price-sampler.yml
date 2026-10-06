@@ -1,0 +1,44 @@
+# Pings the site's cron route every 5 minutes. Vercel Hobby only runs crons daily (see web/vercel.json),
+# and burns are priced from these samples, so this is what keeps burn pricing live.
+#
+# One POST to /api/cron/price does all the periodic work (web/app/api/cron/price/route.ts):
+#   1. refunds reservations older than RESERVATION_TTL_MINUTES (expireStaleReservations)
+#   2. prunes old rate-limit windows
+#   3. samples the token price into price_samples (skipped with 200 while TOKEN_MINT is unset)
+# So reservation expiry needs no separate job: a second caller would only add a duplicate price sample.
+#
+# Setup: repository secrets FORKBOMB_SITE_URL (e.g. https://hydra-heads.vercel.app, no trailing slash)
+# and FORKBOMB_CRON_SECRET (same value as CRON_SECRET in Vercel). Without them the job exits 0 with a notice.
+# GitHub may delay or drop scheduled runs under load; the route tolerates gaps (burns need a sample in the 30 min before them).
+
+name: price-sampler
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: price-sampler
+  cancel-in-progress: false
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: POST /api/cron/price
+        env:
+          SITE_URL: ${{ secrets.FORKBOMB_SITE_URL }}
+          CRON_SECRET: ${{ secrets.FORKBOMB_CRON_SECRET }}
+        run: |
+          if [ -z "$SITE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::notice title=price-sampler skipped::Set FORKBOMB_SITE_URL and FORKBOMB_CRON_SECRET repository secrets to enable."
+            exit 0
+          fi
+          curl -fsS -X POST "${SITE_URL%/}/api/cron/price" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            --max-time 15 --retry 2 --retry-delay 5 --retry-all-errors
+          echo

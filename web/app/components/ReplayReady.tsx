@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 /**
  * Listens for the embedded replay's "ready" message and marks the enclosing
  * .replay-frame, which swaps the static poster for the live replay (CSS).
+ * The message type keeps its original "hydra:" prefix: public/replay/app.js sends it.
  */
 export function ReplayReady() {
   const ref = useRef<HTMLSpanElement>(null);

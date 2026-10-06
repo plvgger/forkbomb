@@ -1,6 +1,6 @@
 /**
  * Registry of live child process groups (sandboxed commands, test runs,
- * Claude Code heads), so an interrupted Hydra never leaves them running.
+ * Claude Code forks), so an interrupted run never leaves them running.
  */
 const groups = new Set<number>();
 

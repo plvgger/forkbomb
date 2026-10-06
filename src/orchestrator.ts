@@ -2,7 +2,9 @@ import { realpathSync } from "node:fs";
 import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type ModelClient, runHead, systemPrompt } from "./agent.js";
+import { BRAND } from "./brand.js";
 import { claudeSettings, runClaudeCodeHead } from "./engines/claude-code.js";
+import { type CreditGate, type HostedChat, runHostedHead } from "./engines/hosted.js";
 import type { EventBus } from "./events.js";
 import { type Forker, pickForker } from "./fork/forker.js";
 import { DEFAULT_PROTECT, judge, parseCounts, score } from "./judge.js";
@@ -23,6 +25,8 @@ export interface RunOptions {
   model?: ModelClient;
   /** Claude Code engine: drives `claude -p` on the user's Claude Code login (subscription). */
   claudeCode?: { model?: string; bin?: string };
+  /** Hosted engine: an OpenAI-compatible gateway paid for with burned-token credit. */
+  hosted?: HostedChat;
   effort: string;
   maxTurns: number;
   headTimeoutMs: number;
@@ -73,8 +77,8 @@ const GIT_TRUSTED = [
   "-c", "core.fsmonitor=false",
   "-c", "core.hooksPath=/dev/null",
   "-c", "commit.gpgsign=false",
-  "-c", "user.name=Hydra",
-  "-c", "user.email=hydra@localhost",
+  "-c", `user.name=${BRAND.name}`,
+  "-c", `user.email=${BRAND.slug}@localhost`,
 ];
 
 /**
@@ -93,7 +97,7 @@ async function initBase(dir: string): Promise<string> {
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: "1" };
   const add = await exec("git", [...GIT_TRUSTED, "-C", dir, "add", "-A"], { env });
   if (add.code !== 0) throw new Error(`git add failed: ${add.stderr}`);
-  const commit = await exec("git", [...GIT_TRUSTED, "-C", dir, "commit", "-q", "--no-verify", "--allow-empty", "-m", "hydra: base"], { env });
+  const commit = await exec("git", [...GIT_TRUSTED, "-C", dir, "commit", "-q", "--no-verify", "--allow-empty", "-m", `${BRAND.slug}: base`], { env });
   if (commit.code !== 0) throw new Error(`git commit failed: ${commit.stderr}`);
   const head = await exec("git", ["-C", dir, "rev-parse", "HEAD"], { env });
   return head.stdout.trim();
@@ -130,7 +134,7 @@ function better(a: HeadRecord, b: HeadRecord | null): boolean {
   return a.finishedAt < b.finishedAt;
 }
 
-export async function runHydra(o: RunOptions, bus: EventBus): Promise<RunSummary> {
+export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary> {
   const t0 = performance.now();
   const repo = realpathSync(o.repo);
   const runDir = join(realpathSync(o.runsDir), o.runId);
@@ -157,12 +161,14 @@ export async function runHydra(o: RunOptions, bus: EventBus): Promise<RunSummary
     ...extra,
   });
 
-  // The body: a clone of the user's repo that every head descends from.
+  // The body (pid 1 in the UI): a clone of the user's repo that every fork descends from.
+  // "body", "heads/" and the event names stay as they were so old runs still replay.
   const body = join(runDir, "body");
   const bodyForker = await pickForker(repo, runDir);
   await bodyForker.fork(repo, [body]);
   const baseSha = await initBase(body);
   const forker = o.forker ?? (await pickForker(body, join(runDir, "heads")));
+  const engine = o.claudeCode ? "claude-code" : o.hosted ? "hosted" : "api";
 
   bus.emit({
     type: "run_start",
@@ -171,8 +177,8 @@ export async function runHydra(o: RunOptions, bus: EventBus): Promise<RunSummary
     testCmd: o.testCmd,
     heads: o.heads,
     rounds: o.rounds,
-    model: o.claudeCode ? `claude-code${o.claudeCode.model ? ` (${o.claudeCode.model})` : ""}` : o.model!.model,
-    engine: o.claudeCode ? "claude-code" : "api",
+    model: o.claudeCode ? `claude-code${o.claudeCode.model ? ` (${o.claudeCode.model})` : ""}` : o.hosted ? o.hosted.label : o.model!.model,
+    engine,
     effort: o.effort,
     mode: o.mode,
     repo,
@@ -203,13 +209,16 @@ export async function runHydra(o: RunOptions, bus: EventBus): Promise<RunSummary
     outputTail: tailOf(base.output),
   });
   if (baseScore === 1) {
-    bus.emit({ type: "log", level: "warn", msg: "The test suite already passes. Nothing for the heads to do." });
+    bus.emit({ type: "log", level: "warn", msg: "The test suite already passes. Nothing for the forks to do." });
     bus.emit({ type: "run_end", ok: true, ms: Math.round(performance.now() - t0), costUsd: 0, applied: false, patchPath: null, best: null, bestScore: 1 });
     return summary({ ok: true, bestScore: 1 });
   }
 
-  if (!o.claudeCode && !o.model) throw new Error("no engine: pass a model client or claudeCode options");
-  const system = systemPrompt({ bashTimeoutS: Math.round(o.bashTimeoutMs / 1000), engine: o.claudeCode ? "claude-code" : "api" });
+  if (!o.claudeCode && !o.hosted && !o.model) throw new Error("no engine: pass a model client, claudeCode or hosted options");
+  const system = systemPrompt({ bashTimeoutS: Math.round(o.bashTimeoutMs / 1000), engine });
+  // Hosted runs share one credit balance: once a head hits 402, nothing else starts.
+  const credit: CreditGate = { exhausted: null };
+  let creditLogged = false;
   let parent: { id: string; dir: string; score: number; strategy: string; summary: string; tail: string; passed: number | null; failed: number | null } = {
     id: "body",
     dir: body,
@@ -225,7 +234,7 @@ export async function runHydra(o: RunOptions, bus: EventBus): Promise<RunSummary
   const losers: string[] = [];
   const staleStates: string[] = [];
 
-  for (let round = 1; round <= o.rounds && !winner; round++) {
+  for (let round = 1; round <= o.rounds && !winner && !credit.exhausted; round++) {
     const ids = Array.from({ length: o.heads }, (_, i) => `${round}.${String(i + 1).padStart(2, "0")}`);
     const dirs = ids.map((id) => join(runDir, "heads", id));
 
@@ -253,7 +262,7 @@ export async function runHydra(o: RunOptions, bus: EventBus): Promise<RunSummary
     const context =
       parent.id === "body"
         ? ""
-        : `\nThis workspace continues from head ${parent.id} (strategy: ${parent.strategy}), the best head of the previous round. ` +
+        : `\nThis workspace continues from fork ${parent.id} (strategy: ${parent.strategy}), the best fork of the previous round. ` +
           `It got ${parent.passed ?? "?"} passing and ${parent.failed ?? "?"} failing, and its changes are already in your workspace.\n` +
           `Where it left off: ${parent.summary || "(no summary)"}\nTail of its last test run:\n${parent.tail}`;
 
@@ -290,21 +299,39 @@ export async function runHydra(o: RunOptions, bus: EventBus): Promise<RunSummary
                 claudeSettings({ dir: dirs[i]!, tmp: spec.tmp, network: o.network }),
               ),
             )
-          : await runHead({
-              id,
-              workspace: ws,
-              model: o.model!,
-              system,
-              prompt,
-              maxTurns: o.maxTurns,
-              signal: ctl.signal,
-              abortReason: () => why[i]!,
-              bus,
-              apiSlots,
-            });
+          : o.hosted
+            ? await runHostedHead({
+                id,
+                workspace: ws,
+                client: o.hosted,
+                system,
+                prompt,
+                maxTurns: o.maxTurns,
+                signal: ctl.signal,
+                abortReason: () => why[i]!,
+                bus,
+                apiSlots,
+                credit,
+              })
+            : await runHead({
+                id,
+                workspace: ws,
+                model: o.model!,
+                system,
+                prompt,
+                maxTurns: o.maxTurns,
+                signal: ctl.signal,
+                abortReason: () => why[i]!,
+                bus,
+                apiSlots,
+              });
         clearTimeout(timer);
         addCost(result.costUsd);
         bus.emit({ type: "head_done", head: id, ...result });
+        if (credit.exhausted && !creditLogged) {
+          creditLogged = true;
+          bus.emit({ type: "log", level: "error", msg: `Hosted credit ran out, so no more forks will start. ${credit.exhausted}` });
+        }
 
         if (result.reason === "severed") {
           state[i] = "done";
@@ -444,8 +471,8 @@ export async function runHydra(o: RunOptions, bus: EventBus): Promise<RunSummary
       type: "log",
       level: "warn",
       msg: overallBest
-        ? `No head passed the whole suite. Best was ${overallBest.id} (${overallBest.strategy}) at ${Math.round(overallBest.score * 100)}%.`
-        : "No head produced a result.",
+        ? `No fork passed the whole suite. Best was ${overallBest.id} (${overallBest.strategy}) at ${Math.round(overallBest.score * 100)}%.`
+        : "No fork produced a result.",
     });
   }
 

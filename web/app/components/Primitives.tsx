@@ -3,7 +3,8 @@ import { cx } from "./cx";
 import { Icon } from "./Icon";
 
 /* ---------- Badge ---------- */
-export type Tone = "neutral" | "accent" | "danger" | "warn" | "info";
+/** accent/ok = green (exit 0, pass). signal/danger = orange (forks, kills, brand). */
+export type Tone = "neutral" | "accent" | "ok" | "signal" | "danger" | "warn" | "info";
 
 export function Badge({
   tone = "neutral",
@@ -190,7 +191,7 @@ export function Card({
 }: {
   as?: ElementType;
   padding?: "none" | "sm" | "md" | "lg";
-  tone?: "default" | "raised" | "accent";
+  tone?: "default" | "raised" | "accent" | "ok" | "signal";
   /** Hover state; use when the whole card is a link (pass as="a" / href via rest). */
   interactive?: boolean;
   className?: string;
@@ -226,9 +227,9 @@ export function Stat({
   /** Smaller unit after the value, e.g. "ms". */
   unit?: string;
   label: ReactNode;
-  /** Source / footnote in small mono, e.g. "hydra bench · M2 Air". */
+  /** Source / footnote in small mono, e.g. "bench · M2 Air". */
   note?: ReactNode;
-  tone?: "default" | "accent" | "danger" | "warn";
+  tone?: "default" | "accent" | "ok" | "signal" | "danger" | "warn";
   className?: string;
 }) {
   return (
@@ -259,12 +260,12 @@ export function Callout({
   className,
   children,
 }: {
-  tone?: "info" | "warn" | "danger" | "ok";
+  tone?: "info" | "warn" | "danger" | "signal" | "ok";
   title?: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
-  const icon = tone === "warn" || tone === "danger" ? "warn" : tone === "ok" ? "check" : "info";
+  const icon = tone === "warn" || tone === "danger" || tone === "signal" ? "warn" : tone === "ok" ? "check" : "info";
   return (
     <aside className={cx("callout", tone !== "info" && `callout--${tone}`, className)} role="note">
       <Icon name={icon} className="callout__icon" />

@@ -196,7 +196,7 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
     );
     if (applied.code !== 0) {
       await rm(cfg.stateDir, { recursive: true, force: true });
-      return { ...empty, output: `The head's patch didn't apply to a clean copy:\n${applied.output}`, stateDir: null };
+      return { ...empty, output: `The fork's patch didn't apply to a clean copy:\n${applied.output}`, stateDir: null };
     }
   }
 

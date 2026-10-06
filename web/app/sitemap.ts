@@ -6,6 +6,7 @@ const ROUTES: { path: string; priority: number; changeFrequency: "weekly" | "mon
   { path: "/docs", priority: 0.9, changeFrequency: "weekly" },
   { path: "/security", priority: 0.8, changeFrequency: "monthly" },
   { path: "/token", priority: 0.5, changeFrequency: "monthly" },
+  { path: "/burns", priority: 0.5, changeFrequency: "weekly" },
   { path: "/terms", priority: 0.2, changeFrequency: "yearly" },
   { path: "/privacy", priority: 0.2, changeFrequency: "yearly" },
 ];

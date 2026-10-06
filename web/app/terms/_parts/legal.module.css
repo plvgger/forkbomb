@@ -38,7 +38,7 @@
     border-radius: 0;
     color: var(--text-3);
   }
-  .tocLink:hover { color: var(--text); border-left-color: var(--border-hover); }
+  .tocLink:hover { color: var(--text); border-left-color: var(--signal); }
 }
 
 .tocLabel {
@@ -99,15 +99,16 @@
 
 .summary {
   max-width: 72ch;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
+  border-left: 2px solid var(--signal);
   border-radius: var(--radius-lg);
   background: var(--surface);
   padding: var(--space-6);
 }
 
 .summaryTitle {
-  font-size: var(--text-base);
-  font-weight: 600;
+  font: 400 var(--text-lg)/1.2 var(--font-pixel);
+  color: var(--text);
   margin: 0 0 var(--space-4);
   scroll-margin-top: calc(var(--nav-h) + 1.5rem);
 }
@@ -133,9 +134,10 @@
   position: absolute;
   left: 0;
   top: 0.62em;
-  width: 8px;
-  height: 1px;
-  background: var(--text-3);
+  width: 6px;
+  height: 6px;
+  top: 0.5em;
+  background: var(--signal);
 }
 
 .clause + .clause {

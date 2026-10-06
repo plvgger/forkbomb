@@ -1,0 +1,132 @@
+/* <ForkBombHero/>: counters row, square stage, status row. Override width via className. */
+.root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 680px;
+  margin-inline: auto;
+  font-family: var(--font-mono);
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  isolation: isolate;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 77, 31, 0.09) 0%, transparent 48%);
+}
+
+/* Scanlines, faded out toward the edges so the stage has no visible box */
+.stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.24) 2px 3px);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 55%, transparent 72%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 55%, transparent 72%);
+}
+
+.poster,
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.poster {
+  z-index: 1;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.canvas {
+  z-index: 2;
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.root[data-live] .canvas {
+  opacity: 1;
+}
+
+.root[data-live] .poster {
+  opacity: 0;
+}
+
+/* Counters */
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding-inline: var(--space-1);
+}
+
+.stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font: 500 var(--text-2xs) / 1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.stat b {
+  display: inline-block;
+  min-width: 3ch;
+  font: 600 var(--text-lg) / 1 var(--font-mono);
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.statKill b {
+  color: var(--signal);
+  text-shadow: var(--crt-glow-signal);
+}
+
+.statOk b {
+  min-width: 1ch;
+  color: var(--ok);
+  text-shadow: var(--crt-glow-ok);
+}
+
+/* Status line */
+.status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-inline: var(--space-1);
+  font: 500 var(--text-xs) / 1.3 var(--font-mono);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.status > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sim {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+@media (max-width: 479px) {
+  .stat b {
+    font-size: var(--text-md);
+  }
+}

@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { BRAND } from "./brand.js";
 import type { EventBus } from "./events.js";
 import { costOf } from "./pricing.js";
 import { HEAD_TOOLS, type Workspace } from "./tools.js";
@@ -16,7 +17,7 @@ export interface TurnRequest {
   messages: BetaMessageParam[];
 }
 
-/** The one seam between Hydra and the model. Tests swap in a scripted client. */
+/** The one seam between the CLI and the model. Tests swap in a scripted client. */
 export interface ModelClient {
   readonly model: string;
   turn(req: TurnRequest, signal: AbortSignal): Promise<BetaMessage>;
@@ -201,13 +202,15 @@ export async function runHead(cfg: HeadConfig): Promise<HeadResult> {
   }
 }
 
-export function systemPrompt(opts: { bashTimeoutS: number; engine: "api" | "claude-code" }): string {
+export function systemPrompt(opts: { bashTimeoutS: number; engine: "api" | "claude-code" | "hosted" }): string {
+  const fresh = `- bash runs each command in a fresh shell that starts at the repository root, so \`cd\` does not carry over between calls. Chain commands with && when you need to.`;
   const where =
     opts.engine === "api"
-      ? `- The repository root is /workspace. Give the text editor paths under /workspace.
-- bash runs each command in a fresh shell that starts at the repository root, so \`cd\` does not carry over between calls. Chain commands with && when you need to.`
-      : `- The repository root is your current working directory. Stay inside it; reads and writes outside it are denied.`;
-  return `You are one head of Hydra. Several copies of you are working on the same task at the same time, each in its own private copy of the repository and each with a different strategy. When a head finishes, the repository's test suite runs on that head's copy. The first head to make the suite pass wins, and the others are cut off.
+      ? `- The repository root is /workspace. Give the text editor paths under /workspace.\n${fresh}`
+      : opts.engine === "hosted"
+        ? `- The repository root is /workspace. Give the edit tool paths under /workspace.\n${fresh}`
+        : `- The repository root is your current working directory. Stay inside it; reads and writes outside it are denied.`;
+  return `You are one fork of ${BRAND.name}. Several copies of you are working on the same task at the same time, each in its own private copy of the repository and each with a different strategy. When a fork finishes, the repository's test suite runs on that fork's copy. The first fork to make the suite pass wins, and the others are cut off.
 
 Your workspace
 ${where}

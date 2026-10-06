@@ -7,7 +7,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
   return (
     <html lang="en">
       <head>
-        <title>Something failed — Hydra</title>
+        <title>Something failed — Forkbomb</title>
         <meta name="robots" content="noindex, nofollow" />
       </head>
       <body>
@@ -25,7 +25,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
                   Try again
                 </button>
                 <a className="btn btn--secondary" href="/">
-                  Back to Hydra
+                  Back to the home page
                 </a>
               </div>
             </div>

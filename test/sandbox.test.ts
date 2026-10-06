@@ -119,7 +119,7 @@ describe("sandbox", () => {
 
   it("caps runaway output", async () => {
     const root = tempDir("sb");
-    const r = await runSandboxed("yes hydra | head -c 2000000", spec(root), { timeoutMs: 20_000, maxOutput: 5000 });
+    const r = await runSandboxed("yes forkbomb | head -c 2000000", spec(root), { timeoutMs: 20_000, maxOutput: 5000 });
     expect(r.output.length).toBeLessThan(5200);
     expect(r.output).toMatch(/omitted|dropped/);
   });

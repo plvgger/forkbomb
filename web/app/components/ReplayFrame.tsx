@@ -12,7 +12,7 @@ import { RunTree } from "./RunTree";
  * and until the replay reports that it is ready.
  */
 export function ReplayFrame({
-  title = `hydra replay · run ${RUN.id}`,
+  title = `forkbomb replay · run ${RUN.id}`,
   status,
   src = REPLAY_EMBED_URL,
   eager = false,
@@ -48,7 +48,7 @@ export function ReplayFrame({
         </div>
         <iframe
           src={src}
-          title="Replay of a real Hydra run: four heads race, one survives"
+          title="Replay of a real Forkbomb run: four forks race, three are killed, one exits 0"
           loading={eager ? "eager" : "lazy"}
           referrerPolicy="no-referrer"
         />

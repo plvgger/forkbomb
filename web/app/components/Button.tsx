@@ -3,7 +3,12 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cx } from "./cx";
 import { Icon, type IconName } from "./Icon";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost";
+/**
+ * Every button is an Inter semibold pill.
+ * primary = signal orange (main CTA, one per view) · secondary = surface · outline = cream hairline
+ * (e.g. "Connect wallet") · ghost = text only · ok = green, only for exit-0 / success actions.
+ */
+export type ButtonVariant = "primary" | "secondary" | "outline" | "ghost" | "ok";
 export type ButtonSize = "sm" | "md" | "lg";
 
 type Common = {
@@ -33,7 +38,13 @@ export type ButtonProps = AsLink | AsButton;
 
 export function Button(props: ButtonProps) {
   const { variant = "secondary", size = "md", icon, iconRight, block, className, children } = props;
-  const cls = cx("btn", `btn--${variant}`, size !== "md" && `btn--${size}`, block && "btn--block", className);
+  const cls = cx(
+    "btn",
+    `btn--${variant}`,
+    size !== "md" && `btn--${size}`,
+    block && "btn--block",
+    className,
+  );
   const inner = (
     <>
       {icon && <Icon name={icon} className="btn__icon" />}
@@ -65,8 +76,17 @@ export function Button(props: ButtonProps) {
     );
   }
 
-  const { variant: _v, size: _s, icon: _i, iconRight: _ir, block: _b, className: _c, children: _ch, type, ...rest } =
-    props as AsButton;
+  const {
+    variant: _v,
+    size: _s,
+    icon: _i,
+    iconRight: _ir,
+    block: _b,
+    className: _c,
+    children: _ch,
+    type,
+    ...rest
+  } = props as AsButton;
   return (
     <button type={type ?? "button"} className={cls} {...rest}>
       {inner}

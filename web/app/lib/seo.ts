@@ -3,7 +3,7 @@ import { SITE } from "../config";
 import { OG_ALT } from "../_og/meta";
 
 /**
- * Per-page metadata: title (templated as "%s — Hydra"), description, canonical, OG, Twitter.
+ * Per-page metadata: title (templated as "%s — Forkbomb"), description, canonical, OG, Twitter.
  * A page's own openGraph/twitter objects replace the root ones, so the card image is set
  * here explicitly. Routes with their own opengraph-image.tsx pass `image`.
  */
