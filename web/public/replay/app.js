@@ -6,8 +6,20 @@
   const CARD_H = 104;
   const COL_GAP = 96;
   const ROW_GAP = 14;
-  const PAD = 28;
   const MAX_LOG = 500;
+
+  // Embed mode (?embed=1): no chrome, tree scales to fit the frame and stays centered.
+  // In a tall frame the tree switches to a vertical (top-down) layout so it stays legible.
+  const EMBED = !!window.__EMBED;
+  const PAD = EMBED ? 16 : 28;
+  const V_INDENT = 36;
+  const V_GAP = 12;
+  const MAX_SCALE = 1.4;
+  const layoutParam = new URLSearchParams(location.search).get("layout");
+  const wantVertical = () =>
+    EMBED && (layoutParam === "vertical" || (layoutParam !== "horizontal" && window.innerHeight > window.innerWidth * 1.05));
+  let vertical = wantVertical();
+  let natural = { W: 0, H: 0 };
 
   const $ = (id) => document.getElementById(id);
   const tree = $("tree");
@@ -117,37 +129,103 @@
 
   function layout() {
     const cols = S.cols.filter((c) => c && c.length);
-    const heights = cols.map((c) => c.length * CARD_H + (c.length - 1) * ROW_GAP);
-    const H = Math.max(...heights, CARD_H);
-    cols.forEach((ids, ci) => {
-      const y0 = PAD + (H - heights[ci]) / 2;
-      ids.forEach((id, ri) => {
+    if (!cols.length) return;
+    let W, H;
+    if (vertical) {
+      // Depth-first, top-down: each child sits one indent right of its parent.
+      const kids = new Map();
+      for (const ids of cols) for (const id of ids) {
         const n = S.nodes.get(id);
-        n.x = PAD + ci * (CARD_W + COL_GAP);
-        n.y = y0 + ri * (CARD_H + ROW_GAP);
+        if (!kids.has(n.parent)) kids.set(n.parent, []);
+        kids.get(n.parent).push(id);
+      }
+      const order = [];
+      const walk = (id) => { order.push(id); for (const k of kids.get(id) || []) walk(k); };
+      for (const id of kids.get(null) || kids.get(undefined) || []) walk(id);
+      let maxDepth = 0;
+      order.forEach((id, i) => {
+        const n = S.nodes.get(id);
+        n.x = PAD + n.col * V_INDENT;
+        n.y = PAD + i * (CARD_H + V_GAP);
+        maxDepth = Math.max(maxDepth, n.col);
         n.el.style.left = `${n.x}px`;
         n.el.style.top = `${n.y}px`;
       });
-    });
-    const W = PAD * 2 + cols.length * CARD_W + (cols.length - 1) * COL_GAP;
+      W = PAD * 2 + CARD_W + maxDepth * V_INDENT;
+      H = PAD * 2 + order.length * CARD_H + (order.length - 1) * V_GAP;
+    } else {
+      const heights = cols.map((c) => c.length * CARD_H + (c.length - 1) * ROW_GAP);
+      const inner = Math.max(...heights, CARD_H);
+      cols.forEach((ids, ci) => {
+        const y0 = PAD + (inner - heights[ci]) / 2;
+        ids.forEach((id, ri) => {
+          const n = S.nodes.get(id);
+          n.x = PAD + ci * (CARD_W + COL_GAP);
+          n.y = y0 + ri * (CARD_H + ROW_GAP);
+          n.el.style.left = `${n.x}px`;
+          n.el.style.top = `${n.y}px`;
+        });
+      });
+      W = PAD * 2 + cols.length * CARD_W + (cols.length - 1) * COL_GAP;
+      H = inner + PAD * 2;
+    }
     tree.style.width = `${W}px`;
-    tree.style.height = `${H + PAD * 2}px`;
-    wires.setAttribute("viewBox", `0 0 ${W} ${H + PAD * 2}`);
+    tree.style.height = `${H}px`;
+    // Size the wire layer in px, with no viewBox: a stretched viewBox would rescale and
+    // re-centre the wires away from the absolutely positioned cards.
+    wires.removeAttribute("viewBox");
+    wires.setAttribute("width", String(W));
+    wires.setAttribute("height", String(H));
     for (const n of S.nodes.values()) {
       if (!n.wire) continue;
       const p = S.nodes.get(n.parent);
       if (!p) continue;
-      const x1 = p.x + CARD_W, y1 = p.y + CARD_H / 2, x2 = n.x, y2 = n.y + CARD_H / 2;
-      const dx = (x2 - x1) * 0.5;
-      n.wire.setAttribute("d", `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`);
+      if (vertical) {
+        const x1 = p.x + V_INDENT / 2, y1 = p.y + CARD_H, x2 = n.x, y2 = n.y + CARD_H / 2, r = 8;
+        n.wire.setAttribute("d", `M${x1},${y1} L${x1},${y2 - r} Q${x1},${y2} ${x1 + r},${y2} L${x2},${y2}`);
+      } else {
+        const x1 = p.x + CARD_W, y1 = p.y + CARD_H / 2, x2 = n.x, y2 = n.y + CARD_H / 2;
+        const dx = (x2 - x1) * 0.5;
+        n.wire.setAttribute("d", `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`);
+      }
       n.wire.style.setProperty("--len", String(Math.ceil(n.wire.getTotalLength())));
       if (n.cut) placeCut(n);
     }
+    natural = { W, H };
+    fit();
+  }
+
+  // Scale the tree to fit the embed frame on both axes and center it.
+  function fit(instant) {
+    if (!EMBED || !natural.W) return;
+    const wrap = $("treeWrap");
+    const aw = wrap.clientWidth, ah = wrap.clientHeight;
+    if (!aw || !ah) return;
+    const m = Math.max(8, Math.min(aw, ah) * 0.03);
+    const s = Math.max(0.05, Math.min((aw - 2 * m) / natural.W, (ah - 2 * m) / natural.H, MAX_SCALE));
+    const ox = (aw - natural.W * s) / 2, oy = (ah - natural.H * s) / 2;
+    const root = document.documentElement;
+    if (instant) root.setAttribute("data-fit-instant", "");
+    tree.style.transform = `translate(${ox.toFixed(1)}px, ${oy.toFixed(1)}px) scale(${s.toFixed(4)})`;
+    if (instant) requestAnimationFrame(() => root.removeAttribute("data-fit-instant"));
+  }
+
+  if (EMBED) {
+    let raf = 0;
+    window.addEventListener("resize", () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const v = wantVertical();
+        if (v !== vertical) { vertical = v; layout(); fit(true); }
+        else fit(true);
+      });
+    });
   }
 
   function placeCut(n) {
     const len = n.wire.getTotalLength();
-    const pt = n.wire.getPointAtLength(len * 0.55);
+    // Vertical wires share a trunk, so cut on the short stub into the card.
+    const pt = n.wire.getPointAtLength(vertical ? Math.max(0, len - 7) : len * 0.55);
     n.cut.setAttribute("d", `M${pt.x - 6},${pt.y - 6} L${pt.x + 6},${pt.y + 6} M${pt.x + 6},${pt.y - 6} L${pt.x - 6},${pt.y + 6}`);
   }
 
@@ -187,7 +265,8 @@
     switch (e.type) {
       case "run_start": {
         S.running = true;
-        setStatus("LIVE", "live");
+        // A recorded run is a replay, never "live".
+        setStatus(replay ? "REPLAY" : "LIVE", "live");
         $("task").textContent = e.task;
         $("testCmd").textContent = e.testCmd;
         $("model").textContent = `${e.model} · ${e.effort} · ${e.mode}`;
@@ -202,6 +281,10 @@
         q(b, ".strat").textContent = e.repo.split("/").slice(-2).join("/");
         setTick(b, "the original repository");
         layout();
+        // Tell the host page (same origin) that the embed has drawn, so it can swap out its static poster.
+        if (EMBED && window.parent !== window) {
+          try { window.parent.postMessage({ type: "forkbomb:replay-ready" }, location.origin); } catch (_) {}
+        }
         log(e.t, "", `run ${e.runId}: ${e.heads} heads × ${e.rounds} round${e.rounds > 1 ? "s" : ""}`);
         break;
       }
@@ -229,7 +312,8 @@
         $("tPhysical").classList.add("hot");
         log(e.t, e.parent, `forked ${e.heads.length} heads in ${fmtMs(avg)} each`, "good");
         const twrap = $("treeWrap");
-        twrap.scrollTo({ left: twrap.scrollWidth, behavior: "smooth" });
+        // Follow new rounds, but on narrow screens keep the body node in view.
+        if (twrap.clientWidth >= 760) twrap.scrollTo({ left: twrap.scrollWidth, behavior: "smooth" });
         break;
       }
       case "head_start":

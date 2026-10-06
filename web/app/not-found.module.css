@@ -1,0 +1,130 @@
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-12);
+  align-items: center;
+}
+
+@media (min-width: 960px) {
+  .grid {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    gap: var(--space-16);
+  }
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(var(--border) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(90deg, var(--border) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bg-raised);
+  background-blend-mode: normal;
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  display: flex;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 30%, var(--bg-raised) 85%);
+  pointer-events: none;
+}
+
+.tree {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  display: block;
+}
+
+.routes {
+  margin-top: var(--space-16);
+  padding-top: var(--space-8);
+  border-top: 1px solid var(--border);
+}
+
+.routes h2 {
+  margin: 0 0 var(--space-4);
+}
+
+.routeList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+@media (min-width: 768px) {
+  .routeList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.routeList li + li {
+  border-top: 1px solid var(--border);
+}
+
+@media (min-width: 768px) {
+  .routeList li:nth-child(2) {
+    border-top: 0;
+  }
+  .routeList li:nth-child(even) {
+    border-left: 1px solid var(--border);
+  }
+}
+
+.route {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  color: var(--text);
+  text-decoration: none;
+  background: var(--bg);
+  transition: background var(--dur-1) var(--ease-out);
+  min-width: 0;
+}
+
+.route:hover {
+  background: var(--surface);
+}
+
+.route:focus-visible {
+  outline-offset: -2px;
+}
+
+.routeLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.routePath {
+  font: var(--text-xs) / 1.4 var(--font-mono);
+  color: var(--text-3);
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.routeIcon {
+  color: var(--text-3);
+  flex: none;
+  transition: transform var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+
+.route:hover .routeIcon {
+  color: var(--text);
+  transform: translateX(2px);
+}

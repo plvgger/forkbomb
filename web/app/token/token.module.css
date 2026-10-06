@@ -1,0 +1,178 @@
+/* /token: page-specific styles, built from the global tokens. */
+
+/* ---------- Address ---------- */
+.addrGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: stretch;
+}
+@media (max-width: 959px) { .addrGrid { grid-template-columns: minmax(0, 1fr); } }
+
+.addr {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+  padding: clamp(1.25rem, 1rem + 1.5vw, 2rem);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.addrHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.addrLabel {
+  font: 500 var(--text-2xs)/1.2 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.addrRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--code-bg);
+}
+.addrValue {
+  flex: 1;
+  min-width: 0;
+  font: 500 clamp(0.875rem, 0.8rem + 0.4vw, 1.0625rem)/1.5 var(--font-mono);
+  color: var(--text);
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: all;
+}
+.addrCopy { flex-shrink: 0; }
+
+.addrEmpty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-4);
+  border: 1px dashed var(--border-hover);
+  border-radius: var(--radius-md);
+  background: var(--code-bg);
+}
+.addrPlaceholder {
+  overflow: hidden;
+  white-space: nowrap;
+  font: 500 var(--text-md)/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--border-hover);
+}
+.addrEmptyText { font-size: var(--text-sm); line-height: 1.6; color: var(--text-2); max-width: 52ch; }
+.addrFoot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: auto;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.addrFoot svg { color: var(--text-3); }
+
+.verify { display: flex; min-width: 0; }
+.verify > * { flex: 1; }
+.verifyList {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.verifyList li::marker { color: var(--warn); font: 500 var(--text-xs) var(--font-mono); }
+
+/* ---------- Ledger: is / is not ---------- */
+/* Two separate cards, each sized to its own list: no empty raised surface under the shorter one. */
+.ledger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+@media (max-width: 767px) { .ledger { grid-template-columns: minmax(0, 1fr); } }
+.ledgerCol {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.ledgerTitle {
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  font: 500 var(--text-2xs)/1.2 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.ledgerList { margin: 0; padding: 0; list-style: none; }
+.ledgerItem {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+}
+.ledgerItem + .ledgerItem { border-top: 1px solid var(--border); }
+@media (max-width: 599px) { .ledgerTitle, .ledgerItem { padding-inline: var(--space-4); } }
+
+.markIs, .markNot { position: relative; width: 14px; height: 14px; margin-top: 4px; border-radius: 3px; }
+.markIs { border: 1px solid var(--border-hover); }
+.markIs::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 1px;
+  background: var(--text-2);
+}
+.markNot { border: 1px solid var(--border-strong); }
+.markNot::before, .markNot::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  height: 1px;
+  background: var(--text-3);
+  transform: rotate(45deg);
+}
+.markNot::after { transform: rotate(-45deg); }
+
+.itemTitle { font-size: var(--text-base); font-weight: 600; color: var(--text); line-height: 1.4; letter-spacing: -0.01em; }
+.itemBody { margin-top: var(--space-1); font-size: var(--text-sm); line-height: 1.6; color: var(--text-2); }
+
+/* ---------- Proof ---------- */
+.flushHeader.flushHeader { margin-bottom: 0; }
+
+/* ---------- Disclaimer ---------- */
+.legal h3:first-child { margin-top: 0; }
+.legal h3 {
+  font: 500 var(--text-xs)/1.3 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.legal p { font-size: var(--text-base); }
+.legalFoot { padding-top: var(--space-6); border-top: 1px solid var(--border); font-size: var(--text-sm) !important; color: var(--text-3); }
+
+/* ---------- Tool band ---------- */
+.toolBand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: clamp(1.25rem, 1rem + 1.5vw, 2rem);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.toolBand > div:first-child { flex: 1 1 22rem; min-width: 0; }
+.toolText { margin-top: var(--space-2); font-size: var(--text-sm); line-height: 1.6; color: var(--text-2); max-width: 56ch; }
