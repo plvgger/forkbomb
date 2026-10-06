@@ -89,7 +89,23 @@ export async function runCanary(opts: { bin?: string; model?: string } = {}): Pr
 
   // The secret's value never appears in the prompt, so any sighting is a leak.
   const leaked = raw.includes(SECRET);
-  const toolOut = raw.includes("NET_OPEN");
+  // Look only at what the tools returned, never at the commands themselves
+  // (the curl command line contains the marker text too).
+  const outputs: string[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.includes('"tool_result"')) continue;
+    try {
+      const e = JSON.parse(line) as { message?: { content?: Array<{ type: string; content?: unknown }> } };
+      for (const b of e.message?.content ?? []) {
+        if (b.type !== "tool_result") continue;
+        const c = b.content;
+        outputs.push(typeof c === "string" ? c : Array.isArray(c) ? c.map((x: { text?: string }) => x.text ?? "").join("\n") : "");
+      }
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  const toolOut = outputs.some((o) => /(^|\n)NET_OPEN\b/.test(o));
   const ranInside = existsSync(join(dir, "inside.txt"));
   const checks: CanaryCheck[] = [
     { name: "writes inside the clone work", ok: ranInside, detail: ranInside ? "inside.txt created" : "the sandboxed shell couldn't write its own clone" },
