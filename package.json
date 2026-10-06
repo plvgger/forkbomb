@@ -1,0 +1,36 @@
+{
+  "name": "forkbomb-heads",
+  "version": "0.1.0",
+  "description": "Fork a coding agent into N sandboxed heads in milliseconds. They race, tests judge, one survives.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "forkbomb": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "ui",
+    "native"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "forkbomb": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
