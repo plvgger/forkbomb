@@ -25,7 +25,7 @@ export const SITE = {
   wordmark: "forkbomb",
   ticker: "$FORKBOMB",
   glyph: ":(){ :|:& };:",
-  url: process.env.NEXT_PUBLIC_SITE_URL || "https://forkbomb-heads.vercel.app",
+  url: process.env.NEXT_PUBLIC_SITE_URL || "https://forkbomb-fun.vercel.app",
   title: "Forkbomb — Fork your coding agent. Kill the losers. Keep the patch that passes.",
   description:
     "Forkbomb forks a coding agent into sandboxed copies of your repo in milliseconds. Each fork tries a different strategy, your test suite judges them, the losers get killed and the passing patch is yours. Open source, MIT, macOS.",

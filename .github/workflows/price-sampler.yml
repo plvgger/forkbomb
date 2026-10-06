@@ -7,7 +7,7 @@
 #   3. samples the token price into price_samples (skipped with 200 while TOKEN_MINT is unset)
 # So reservation expiry needs no separate job: a second caller would only add a duplicate price sample.
 #
-# Setup: repository secrets FORKBOMB_SITE_URL (e.g. https://forkbomb-heads.vercel.app, no trailing slash)
+# Setup: repository secrets FORKBOMB_SITE_URL (e.g. https://forkbomb-fun.vercel.app, no trailing slash)
 # and FORKBOMB_CRON_SECRET (same value as CRON_SECRET in Vercel). Without them the job exits 0 with a notice.
 # GitHub may delay or drop scheduled runs under load; the route tolerates gaps (burns need a sample in the 30 min before them).
 
