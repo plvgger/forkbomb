@@ -3,3 +3,6 @@ dist
 .test-tmp
 *.log
 .vercel
+web/node_modules
+web/.next
+web/.vercel
