@@ -35,7 +35,7 @@ Forkbomb drives the forks one of three ways. Whichever you pick, every shell com
 
 - **`--engine claude-code` (default).** Each fork is a headless Claude Code session (`claude -p`) on whatever Claude Code is logged in with, so a Claude Pro or Max plan works with no API credits. Forks count against your plan's usage limits, and eight forks use them about eight times as fast as one session. Before the first run on each Claude Code version, Forkbomb runs an isolation canary: a real session told to escape. Forks start only if every escape failed. Run it any time with `forkbomb canary`.
 - **`--engine api`.** Forkbomb's own tool loop on the Anthropic Messages API with `ANTHROPIC_API_KEY`, pay as you go. Default model `claude-opus-5-5` at `medium` effort.
-- **`--engine hosted`.** The same tool loop and the same sandbox, but the model runs on the hosted gateway (OpenAI-compatible, `FORKBOMB_HOSTED_URL`, default `https://hydra-heads.vercel.app/api/v1`), paid with credit from burned $FORKBOMB. Put a workspace key in `FORKBOMB_API_KEY`; `forkbomb credits` shows the balance and pricing. If a fork finds the balance empty, no more forks start. **The hosted GPU pool is coming online and isn't serving yet**, so use `claude-code` or `api` for now.
+- **`--engine hosted`.** The same tool loop and the same sandbox, but the model runs on the hosted gateway (OpenAI-compatible, `FORKBOMB_HOSTED_URL`, default `https://forkbomb-fun.vercel.app/api/v1`), paid with credit from burned $FORKBOMB. Put a workspace key in `FORKBOMB_API_KEY`; `forkbomb credits` shows the balance and pricing. If a fork finds the balance empty, no more forks start. **The hosted GPU pool is coming online and isn't serving yet**, so use `claude-code` or `api` for now.
 
 Self-hosting stays free. Keys stay on your machine: the Anthropic key goes only to Anthropic, the hosted key only to the hosted gateway, and no key ever reaches a fork.
 
@@ -43,7 +43,7 @@ Self-hosting stays free. Keys stay on your machine: the Anthropic key goes only 
 
 $FORKBOMB has not launched yet. When it does, hosted credit works like this:
 
-- **Burn with a memo.** Create a workspace at `https://hydra-heads.vercel.app/app`, then burn $FORKBOMB in a transaction whose memo is exactly `forkbomb:<workspaceId>`.
+- **Burn with a memo.** Create a workspace at `https://forkbomb-fun.vercel.app/app`, then burn $FORKBOMB in a transaction whose memo is exactly `forkbomb:<workspaceId>`.
 - **Priced at burn time.** The server reads the finalized transaction back from Solana, checks it burned the right mint with your memo, and prices it in USD at the time of the burn, from price samples around the block time. The most conservative price wins.
 - **Consumptive credit.** The USD value becomes credit on your workspace, spent per token on the hosted gateway. Credit has no cash value and is non-refundable and non-transferable; burns are final.
 - **Public ledger.** Every verified burn is listed on the site's burns page, and each signature is credited at most once.
@@ -54,7 +54,7 @@ Every shell command a fork runs goes through macOS Seatbelt (`sandbox-exec`): wr
 
 Limits, stated plainly: Seatbelt is a macOS mechanism, not a VM. Forks can read most of your filesystem (not the credential folders) and use CPU and memory freely. Run Forkbomb on code you'd be comfortable letting an agent work on.
 
-The full threat model is at https://hydra-heads.vercel.app/security.
+The full threat model is at https://forkbomb-fun.vercel.app/security.
 
 ## Install
 

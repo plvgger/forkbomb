@@ -444,7 +444,7 @@ describe("hosted settings and credits", () => {
     expect(HOSTED_KEY_ENV).toBe("FORKBOMB_API_KEY");
     expect(HOSTED_URL_ENV).toBe("FORKBOMB_HOSTED_URL");
     expect(hostedSettings({})).toEqual({ baseUrl: DEFAULT_HOSTED_URL, apiKey: null });
-    expect(DEFAULT_HOSTED_URL).toBe("https://hydra-heads.vercel.app/api/v1");
+    expect(DEFAULT_HOSTED_URL).toBe("https://forkbomb-fun.vercel.app/api/v1");
     expect(hostedSettings({ FORKBOMB_HOSTED_URL: " http://localhost:3000/api/v1 ", FORKBOMB_API_KEY: ` ${KEY} ` })).toEqual({
       baseUrl: "http://localhost:3000/api/v1",
       apiKey: KEY,
@@ -467,9 +467,9 @@ describe("hosted settings and credits", () => {
     expect(() => checkBaseUrl("not a url")).toThrow(/valid URL/);
     expect(() => checkBaseUrl("https://user:pw@example.com/api/v1")).toThrow(/credentials/);
     expect(checkBaseUrl("http://127.0.0.1:9/api/v1").host).toBe("127.0.0.1:9");
-    const c = new HostedClient({ baseUrl: "https://hydra-heads.vercel.app/api/v1/", apiKey: KEY });
-    expect(c.topUpUrl).toBe("https://hydra-heads.vercel.app/app");
-    expect(c.label).toBe("hosted (hydra-heads.vercel.app)");
+    const c = new HostedClient({ baseUrl: "https://forkbomb-fun.vercel.app/api/v1/", apiKey: KEY });
+    expect(c.topUpUrl).toBe("https://forkbomb-fun.vercel.app/app");
+    expect(c.label).toBe("hosted (forkbomb-fun.vercel.app)");
     expect(JSON.stringify(c)).not.toContain(KEY);
   });
 

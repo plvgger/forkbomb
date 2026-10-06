@@ -9,7 +9,7 @@ export const BRAND = {
   slug: "forkbomb",
   ticker: "FORKBOMB",
   /** Public site; the hosted API lives under <site>/api/v1. The final domain is not picked yet. */
-  site: "https://hydra-heads.vercel.app",
+  site: "https://forkbomb-fun.vercel.app",
 } as const;
 
 /**
