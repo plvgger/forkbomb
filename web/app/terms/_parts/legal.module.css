@@ -1,0 +1,165 @@
+/* Same frame as /docs: a 216px TOC column, then a 54rem reading column. */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-10);
+}
+
+@media (min-width: 1024px) {
+  .layout {
+    grid-template-columns: 216px minmax(0, 1fr);
+    gap: clamp(2.5rem, 1rem + 4vw, 5rem);
+    align-items: start;
+  }
+}
+
+/* ---------- Table of contents ---------- */
+.toc {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  padding: var(--space-5);
+}
+
+@media (min-width: 1024px) {
+  .toc {
+    position: sticky;
+    top: calc(var(--nav-h) + var(--space-8));
+    border: 0;
+    border-radius: 0;
+    background: none;
+    padding: 0;
+  }
+  .tocList { border-left: 1px solid var(--border); gap: 0; }
+  .tocLink {
+    margin-left: -1px;
+    padding: 6px var(--space-3);
+    border-left: 1px solid transparent;
+    border-radius: 0;
+    color: var(--text-3);
+  }
+  .tocLink:hover { color: var(--text); border-left-color: var(--border-hover); }
+}
+
+.tocLabel {
+  font: 500 var(--text-2xs) / 1.4 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 var(--space-3);
+}
+
+.tocList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+@media (min-width: 600px) and (max-width: 1023px) {
+  .tocList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-6);
+  }
+}
+
+.tocLink {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding-block: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--text-2);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.tocLink:hover {
+  color: var(--text);
+}
+
+.tocNum {
+  font: var(--text-2xs) / 1.4 var(--font-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* ---------- Body ---------- */
+.body {
+  min-width: 0;
+  max-width: 54rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.summary {
+  max-width: 72ch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-6);
+}
+
+.summaryTitle {
+  font-size: var(--text-base);
+  font-weight: 600;
+  margin: 0 0 var(--space-4);
+  scroll-margin-top: calc(var(--nav-h) + 1.5rem);
+}
+
+.summaryList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.summaryList li {
+  position: relative;
+  padding-left: var(--space-5);
+}
+
+.summaryList li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 8px;
+  height: 1px;
+  background: var(--text-3);
+}
+
+.clause + .clause {
+  margin-top: var(--space-12);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.body .clause > h2 {
+  margin-top: var(--space-3);
+}
+
+/* Section number above the heading, in the shared eyebrow style (as on /docs). */
+.clauseNum {
+  display: flex;
+  margin-top: var(--space-8);
+  font-variant-numeric: tabular-nums;
+}
+.body .clause:first-child > .clauseNum { margin-top: 0; }
+
+.clause > * + * {
+  margin-top: 1.1em;
+}
+
+.clause > h2 + * {
+  margin-top: 0.6em;
+}

@@ -4,30 +4,54 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Hydra</title>
-  <link rel="stylesheet" href="style.css">
+  <title>Replay: a recorded Hydra run — Hydra</title>
+  <meta name="description" content="Replay of a real Hydra run from 2026-10-05: four heads race on a demo calc repo, three are severed, head 1.04 passes 14 of 14 tests in 38.7 s.">
+  <meta name="theme-color" content="#07090b">
+  <link rel="canonical" href="https://hydra-heads.vercel.app/replay">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Hydra">
+  <meta property="og:title" content="Replay: a recorded Hydra run — Hydra">
+  <meta property="og:description" content="Four heads race. Three are severed. One passes 14 of 14 tests. Every event comes from the run's own log.">
+  <meta property="og:url" content="https://hydra-heads.vercel.app/replay">
+  <meta property="og:image" content="https://hydra-heads.vercel.app/opengraph-image">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://hydra-heads.vercel.app/twitter-image">
+  <link rel="stylesheet" href="/replay/style.css">
   <style>
-    html[data-embed] .top, html[data-embed] .task, html[data-embed] .side, html[data-embed] .replay, html[data-embed] .tiles { display: none !important; }
-    html[data-embed] .stage { grid-template-columns: 1fr; padding: 0; }
-    html[data-embed] .treeWrap { border: 0; border-radius: 0; min-height: 100vh; }
-    html[data-embed], html[data-embed] body { background: transparent; }
+    /* Embed mode (?embed=1): chromeless tree that scales to fit its frame. */
+    html[data-embed] .top, html[data-embed] .skip, html[data-embed] .task, html[data-embed] .side, html[data-embed] .replay, html[data-embed] .tiles { display: none !important; }
+    html[data-embed], html[data-embed] body { background: transparent; height: 100%; overflow: hidden; }
+    html[data-embed] body { min-height: 0; }
+    html[data-embed] .stage { display: block; flex: 1; padding: 0; height: 100%; }
+    html[data-embed] .treeWrap { border: 0; border-radius: 0; height: 100%; min-height: 0; overflow: hidden; }
+    html[data-embed] .tree { position: absolute; left: 0; top: 0; min-width: 0; transform-origin: 0 0; will-change: transform; transition: transform .6s cubic-bezier(.2,.7,.2,1); }
+    html[data-embed][data-fit-instant] .tree { transition: none; }
+    @media (prefers-reduced-motion: reduce) { html[data-embed] .tree { transition: none; } }
   </style>
+  <style>@media (max-width: 760px){ html:not([data-embed]) .stage { padding-bottom: 72px; } }</style>
 </head>
 <body>
   <script>
     (function(){
       var p = new URLSearchParams(location.search);
-      if (p.has("embed")) { window.__EMBED = true; document.documentElement.setAttribute("data-embed",""); }
+      var v = p.get("embed");
+      if (v !== null && v !== "0" && v !== "false") { window.__EMBED = true; document.documentElement.setAttribute("data-embed",""); }
     })();
   </script>
+  <a class="skip" href="#treeWrap">Skip to the replay</a>
   <header class="top">
-    <div class="brand">
+    <a class="brand" href="/" aria-label="Hydra home">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
         <path d="M16 29V17M16 17C16 11 9 11 6 5M16 17C16 11 23 11 26 5M16 17V4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
         <circle cx="6" cy="5" r="2.4" fill="currentColor"/><circle cx="16" cy="4" r="2.4" fill="currentColor"/><circle cx="26" cy="5" r="2.4" fill="currentColor"/>
       </svg>
       <span class="word">HYDRA</span>
-    </div>
+    </a>
+    <nav class="sitelinks" aria-label="Site">
+      <a href="/docs">Docs</a>
+      <a href="/security">Security</a>
+    </nav>
     <div class="status"><span id="status" class="pill idle">WAITING</span></div>
     <div class="meta">
       <span><b id="elapsed">0.0s</b> elapsed</span>
@@ -48,8 +72,23 @@
     <div class="tile"><span class="k">ISOLATION</span><span class="v" id="tSandbox">—</span><span class="s" id="tSandboxS">per head</span></div>
   </section>
 
-  <main class="stage">
-    <div class="treeWrap" id="treeWrap">
+  <h1 class="sr-only">Replay of a recorded Hydra run</h1>
+  <noscript>
+    <section class="nojs">
+      <p class="label">RECORDED RUN · 2026-10-05 · 20261005-155223</p>
+      <p>The replay needs JavaScript. This is how the run ended:</p>
+      <ol class="nojsTree">
+        <li><b>BODY</b> demo calc repo · baseline 4/14 passing</li>
+        <li class="cut"><b>1.01</b> surgeon · severed</li>
+        <li class="cut"><b>1.02</b> root-cause · severed</li>
+        <li class="cut"><b>1.03</b> test-driven · severed</li>
+        <li class="won"><b>1.04</b> rewriter · survivor · 14/14 passing · 94 lines in 1 file</li>
+      </ol>
+      <p class="muted">Forked in 1.13 ms per head. Whole run 38.7 s. <a href="/">Back to Hydra</a></p>
+    </section>
+  </noscript>
+  <main class="stage" id="main">
+    <div class="treeWrap" id="treeWrap" tabindex="-1">
       <div class="tree" id="tree">
         <svg class="wires" id="wires"></svg>
       </div>
@@ -81,7 +120,7 @@
     <span class="muted">Replay of a recorded run. Long waits are compressed.</span>
   </footer>
 
-  <script src="data.js"></script>
-  <script src="app.js"></script>
+  <script src="/replay/data.js"></script>
+  <script src="/replay/app.js"></script>
 </body>
 </html>
