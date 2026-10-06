@@ -4,20 +4,41 @@
 // LAUNCH GATE: the repo must be public at this URL before the site is shared.
 // Override per deploy with NEXT_PUBLIC_GITHUB_URL. `npm run check:links` fails until it returns 200.
 export const GITHUB_URL = (process.env.NEXT_PUBLIC_GITHUB_URL || "https://github.com/plvgger/forkbomb").replace(/\/$/, "");
+export const REPO_DIR = GITHUB_URL.split("/").pop() || "forkbomb"; // folder `git clone` creates
 export const ADVISORY_URL = `${GITHUB_URL}/security/advisories/new`;
 export const ISSUES_URL = `${GITHUB_URL}/issues`;
+/**
+ * Where the CLI keeps runs, the canary cache and .env, and the file its .git canary probes.
+ * Set by the CLI (src/util.ts resolveHome, src/engines/canary.ts), not by the brand.
+ */
+export const CLI_HOME = "~/.forkbomb";
+export const CLI_LEGACY_HOME = "~/.forkbomb"; // pre-rename installs; the CLI still reads it while ~/.forkbomb doesn't exist
+export const CLI_PROBE = ".git/forkbomb-probe";
 export const CONTRACT_ADDRESS = ""; // set at coin launch; empty renders the "launching" state
+export const TOKEN_MEMO_PREFIX = "forkbomb:"; // burn memo is `forkbomb:<workspaceId>`; must equal `${BRAND.slug}:` (lib/server/config.ts, pinned by a test)
+export const APP_URL = "/app"; // "Connect wallet" and "Open app" both go here
 export const REPLAY_URL = "/replay"; // full replay UI. next.config.mjs rewrites it to the static file; use a plain <a>
 export const REPLAY_EMBED_URL = "/replay/index.html?embed=1"; // chromeless tree, scales to fit its frame
 
 export const SITE = {
   name: "Forkbomb",
+  wordmark: "forkbomb",
+  ticker: "$FORKBOMB",
+  glyph: ":(){ :|:& };:",
   url: process.env.NEXT_PUBLIC_SITE_URL || "https://forkbomb-heads.vercel.app",
-  title: "Forkbomb — Fork your coding agent. Let your tests pick the winner.",
+  title: "Forkbomb — Fork your coding agent. Kill the losers. Keep the patch that passes.",
   description:
-    "Forkbomb forks a coding agent into sandboxed copies of your repo in milliseconds, gives each a different strategy, and keeps the one whose patch passes your test suite. Open source, MIT, macOS.",
+    "Forkbomb forks a coding agent into sandboxed copies of your repo in milliseconds. Each fork tries a different strategy, your test suite judges them, the losers get killed and the passing patch is yours. Open source, MIT, macOS.",
+  tagline: "Fork it. Test it. Kill the rest.",
   license: "MIT",
   platform: "macOS only today (APFS + Seatbelt)",
+} as const;
+
+/** Honest launch status. Flip these only when they are true. */
+export const STATUS = {
+  tokenLive: CONTRACT_ADDRESS.trim().length > 0,
+  hostedPoolLive: false, // hosted GPU pool is not provisioned yet: say "coming online"
+  appLive: true, // /app is live (wallet connect, keys, credit). Burning stays closed until tokenLive.
 } as const;
 
 /**
@@ -28,11 +49,18 @@ export type InstallStep = { label: string; lines: string[] };
 
 // Forkbomb is not on npm yet. Install from source only.
 export const INSTALL: InstallStep[] = [
-  { label: "Clone and build", lines: [`$ git clone ${GITHUB_URL}`, "$ cd forkbomb && npm install && npm run build"] },
+  {
+    label: "Clone and build",
+    lines: [`$ git clone ${GITHUB_URL}`, `$ cd ${REPO_DIR} && npm install && npm run build`],
+  },
   { label: "Check the machine", lines: ["$ node dist/cli.js doctor"] },
   {
     label: "Run it",
-    lines: ["$ node dist/cli.js run ./my-repo \\", '    --task "fix the failing tests" \\', '    --test "npm test" --ui'],
+    lines: [
+      "$ node dist/cli.js run ./my-repo \\",
+      '    --task "fix the failing tests" \\',
+      '    --test "npm test" --ui',
+    ],
   },
 ];
 
@@ -46,11 +74,33 @@ export const REQUIREMENTS = [
   "Claude Code logged in (Pro or Max plan), or an Anthropic API key",
 ] as const;
 
-// forkbomb bench. MacBook Air M2 24 GB, 80 MB node_modules tree, 4,400 files, 16 heads.
+/** Engines the CLI can drive. `hosted` is paid with credit from burning $FORKBOMB and is not live yet. */
+export const ENGINES = [
+  {
+    id: "claude-code",
+    name: "Claude Code",
+    pays: "Your Claude Pro or Max plan",
+    live: true,
+  },
+  {
+    id: "api",
+    name: "Anthropic API",
+    pays: "Your Anthropic API key",
+    live: true,
+  },
+  {
+    id: "hosted",
+    name: "Forkbomb hosted",
+    pays: "Credit from burning $FORKBOMB",
+    live: false,
+  },
+] as const;
+
+// Bench. MacBook Air M2 24 GB, 80 MB node_modules tree, 4,400 files, 16 forks.
 export const BENCH = {
   machine: "MacBook Air (M2, 24 GB)",
   workload: "80 MB node_modules tree, 4,400 files",
-  heads: 16,
+  heads: 16, // forks
   clonefile: { perHeadMs: 45, extraDisk: "22 MB", extraDiskMB: 22 },
   copy: { perHeadMs: 1108, extraDisk: "1.3 GB", extraDiskMB: 1300 },
   speedup: "≈24×",
@@ -58,6 +108,7 @@ export const BENCH = {
 } as const;
 
 // A real recorded run. Same events power /replay.
+// Field names are kept from the event log (heads = forks, severed = killed).
 export const RUN = {
   date: "2026-10-05",
   id: "20261005-155223",
@@ -78,31 +129,111 @@ export const RUN = {
   durationS: 38.7,
 } as const;
 
-export const TEST_COUNT = 64; // automated tests in Forkbomb's own suite
+/** Vocabulary aliases for RUN. Same numbers. */
+export const RUN_FORKS = RUN.heads;
+export const RUN_KILLED = RUN.severed;
+
+/**
+ * Per-fork detail from the same run's event log (public/replay/events.jsonl).
+ * forkMs: clonefile time per fork. turns: agent turns. tools: tool calls. End state at 38.5 s.
+ */
+export const RUN_PS: {
+  id: string;
+  strategy: string;
+  forkMs: number;
+  turns: number;
+  tools: number;
+  result: "exit0" | "killed";
+}[] = [
+  {
+    id: "1.01",
+    strategy: "surgeon",
+    forkMs: 0.97,
+    turns: 8,
+    tools: 5,
+    result: "killed",
+  },
+  {
+    id: "1.02",
+    strategy: "root-cause",
+    forkMs: 1.46,
+    turns: 8,
+    tools: 5,
+    result: "killed",
+  },
+  {
+    id: "1.03",
+    strategy: "test-driven",
+    forkMs: 1.05,
+    turns: 6,
+    tools: 3,
+    result: "killed",
+  },
+  {
+    id: "1.04",
+    strategy: "rewriter",
+    forkMs: 1.03,
+    turns: 9,
+    tools: 5,
+    result: "exit0",
+  },
+];
+export const RUN_END_S = 38.5; // when the judge passed 1.04 and killed the rest
+
+export const TEST_COUNT = 64; // automated tests in the CLI's own suite
 
 // Real terminal transcript of RUN (trimmed). Tones map to <Terminal> line tones.
-export const RUN_TRANSCRIPT: { text: string; tone?: "cmd" | "out" | "dim" | "ok" | "err" | "warn" | "info" }[] = [
-  { tone: "cmd", text: 'forkbomb run ./calc --task "fix the failing tests" --test "node --test" --heads 4' },
-  { tone: "dim", text: "run · 4 heads × 2 rounds · claude-code · race · sandbox on" },
+export const RUN_TRANSCRIPT: {
+  text: string;
+  tone?: "cmd" | "out" | "dim" | "ok" | "err" | "warn" | "info" | "signal";
+}[] = [
+  {
+    tone: "cmd",
+    text: 'node dist/cli.js run ./calc --task "fix the failing tests" --test "node --test" --forks 4',
+  },
+  {
+    tone: "dim",
+    text: "run · 4 forks × 2 rounds · claude-code · race · sandbox on",
+  },
   { tone: "warn", text: "baseline: 4 passing, 10 failing" },
-  { tone: "ok", text: "fork  4 heads in 1.13 ms each via apfs-clonefile" },
-  { tone: "out", text: "  1.01 surgeon   1.02 root-cause   1.03 test-driven   1.04 rewriter" },
+  {
+    tone: "signal",
+    text: "fork()  4 copies of pid 1 in 1.13 ms each via apfs-clonefile",
+  },
+  {
+    tone: "out",
+    text: "  1.01 surgeon   1.02 root-cause   1.03 test-driven   1.04 rewriter",
+  },
   { tone: "dim", text: "  1.04 ✎ create calc.js  ·  $ node --test" },
   { tone: "ok", text: "  1.04 PASS 14/14 · 94 lines" },
-  { tone: "err", text: "  1.01 severed   1.02 severed   1.03 severed  (1.04 passed first)" },
-  { tone: "ok", text: "SURVIVOR 1.04: 94 lines in 1 file. All 14 tests pass. 38.7s" },
+  { tone: "signal", text: "  kill -9  1.01  1.02  1.03  (1.04 passed first)" },
+  {
+    tone: "ok",
+    text: "exit 0  1.04: 94 lines in 1 file. All 14 tests pass. 38.7s",
+  },
 ];
 
-export type NavLink = { label: string; href: string; external?: boolean; native?: boolean };
+export type NavLink = {
+  label: string;
+  href: string;
+  external?: boolean;
+  native?: boolean;
+};
 
 export const NAV: NavLink[] = [
   { label: "Product", href: "/" },
   { label: "Docs", href: "/docs" },
+  { label: "Burns", href: "/burns" },
   { label: "Security", href: "/security" },
-  { label: "Replay", href: REPLAY_URL, native: true },
 ];
 
 export const TOKEN_LINK: NavLink = { label: "$FORKBOMB", href: "/token" };
+
+/** Nav calls to action. Both open /app (live; burns inside it stay closed until the token launches). */
+export const NAV_CTA = {
+  wallet: { label: "Connect wallet", href: APP_URL },
+  app: { label: "Open app", href: APP_URL },
+} as const;
 
 export const FOOTER: { title: string; links: NavLink[] }[] = [
   {
@@ -111,6 +242,7 @@ export const FOOTER: { title: string; links: NavLink[] }[] = [
       { label: "Overview", href: "/" },
       { label: "Watch a run", href: REPLAY_URL, native: true },
       { label: "Security", href: "/security" },
+      { label: "Open app", href: APP_URL },
     ],
   },
   {
@@ -122,11 +254,11 @@ export const FOOTER: { title: string; links: NavLink[] }[] = [
     ],
   },
   {
-    title: "Community",
+    title: "Token",
     links: [
-      { label: "GitHub", href: GITHUB_URL, external: true },
-      { label: "Issues", href: ISSUES_URL, external: true },
       { label: "$FORKBOMB", href: "/token" },
+      { label: "Burn ledger", href: "/burns" },
+      { label: "Issues", href: ISSUES_URL, external: true },
     ],
   },
   {
@@ -134,7 +266,11 @@ export const FOOTER: { title: string; links: NavLink[] }[] = [
     links: [
       { label: "Terms", href: "/terms" },
       { label: "Privacy", href: "/privacy" },
-      { label: "MIT License", href: `${GITHUB_URL}/blob/main/LICENSE`, external: true },
+      {
+        label: "MIT License",
+        href: `${GITHUB_URL}/blob/main/LICENSE`,
+        external: true,
+      },
     ],
   },
 ];

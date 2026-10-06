@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { claudeEnv, claudeSettings, runClaudeCodeHead } from "../src/engines/claude-code.js";
 import { EventBus } from "../src/events.js";
 import { DEFAULT_PROTECT } from "../src/judge.js";
-import { runForkbomb } from "../src/orchestrator.js";
+import { runRace } from "../src/orchestrator.js";
 import { tempDir, writeTree } from "./helpers.js";
 
 const FAKE = join(process.cwd(), "test", "fake-claude.mjs");
@@ -122,7 +122,7 @@ describe("claude-code engine", () => {
         'test("sum", () => assert.equal(sum(2, 3), 5));\ntest("mul", () => assert.equal(mul(2, 3), 6));\n',
     });
     const bus = new EventBus();
-    const res = await runForkbomb(
+    const res = await runRace(
       {
         runId: "cc1",
         repo,

@@ -1,13 +1,40 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BRAND, HOME_ENV, LEGACY_ENV, LEGACY_SLUG } from "./brand.js";
 
 export const PKG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-export function forkbombHome(): string {
-  return process.env.FORKBOMB_HOME ?? join(homedir(), ".forkbomb");
+export interface HomeDir {
+  dir: string;
+  /** Set when the dir came from a pre-rename name: what to move or rename. */
+  legacy: string | null;
+}
+
+/**
+ * Where runs, the clone helper, the canary record and the .env file live:
+ * <SLUG>_HOME, then the pre-rename env name, then ~/.<slug>. An existing
+ * ~/.<legacy> is used only while ~/.<slug> doesn't exist yet.
+ */
+export function resolveHome(env: NodeJS.ProcessEnv = process.env, home = homedir()): HomeDir {
+  const set = env[HOME_ENV]?.trim();
+  if (set) return { dir: set, legacy: null };
+  const oldEnv = LEGACY_ENV[HOME_ENV]!;
+  const old = env[oldEnv]?.trim();
+  if (old) return { dir: old, legacy: `${oldEnv} is deprecated; rename it to ${HOME_ENV}` };
+  const dir = join(home, `.${BRAND.slug}`);
+  const legacyDir = join(home, `.${LEGACY_SLUG}`);
+  if (!existsSync(dir) && existsSync(legacyDir)) {
+    return { dir: legacyDir, legacy: `using legacy ~/.${LEGACY_SLUG}; move it to ~/.${BRAND.slug}` };
+  }
+  return { dir, legacy: null };
+}
+
+export function appHome(): string {
+  return resolveHome().dir;
 }
 
 /** Single-quote a string for /bin/sh. */

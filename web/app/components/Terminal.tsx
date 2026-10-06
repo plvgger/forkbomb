@@ -2,12 +2,14 @@ import type { ReactNode } from "react";
 import { cx } from "./cx";
 import { TerminalAnimator } from "./TerminalAnimator";
 
-export type TerminalTone = "cmd" | "out" | "dim" | "ok" | "err" | "warn" | "info";
+/** ok = green (pass / exit 0 only) · signal = orange (fork, kill) · err = orange-red error. */
+export type TerminalTone = "cmd" | "out" | "dim" | "ok" | "err" | "warn" | "info" | "signal";
 export type TerminalLine = { text: string; tone?: TerminalTone };
 
 /**
  * Terminal window. `cmd` lines get a "$ " prompt automatically (do not include it).
  * `animate` types lines in when scrolled into view (progressive enhancement).
+ * CRT look (scanlines, glow) by default; `flat` turns it off for dense reference blocks.
  */
 export function Terminal({
   lines,
@@ -16,6 +18,7 @@ export function Terminal({
   animate = false,
   interval = 420,
   loop = false,
+  flat = false,
   className,
   ariaLabel,
 }: {
@@ -27,11 +30,13 @@ export function Terminal({
   /** ms between lines when animating. */
   interval?: number;
   loop?: boolean;
+  /** No scanlines / vignette. */
+  flat?: boolean;
   className?: string;
   ariaLabel?: string;
 }) {
   return (
-    <figure className={cx("terminal", className)} data-animate={animate ? "true" : undefined}>
+    <figure className={cx("terminal", flat && "terminal--flat", className)} data-animate={animate ? "true" : undefined}>
       <figcaption className="terminal__bar">
         <span className="terminal__dots" aria-hidden="true">
           <i />

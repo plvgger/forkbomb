@@ -3,13 +3,14 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { killGroup, track, untrack } from "../procs.js";
 import { createInterface } from "node:readline";
 import type { HeadResult } from "../agent.js";
+import { BRAND, LEGACY_SLUG } from "../brand.js";
 import type { EventBus } from "../events.js";
 
 /**
- * Head engine that drives the Claude Code CLI in headless mode (`claude -p`).
+ * Fork engine that drives the Claude Code CLI in headless mode (`claude -p`).
  * It runs on whatever Claude Code is logged in with, so a Claude Pro or Max
  * subscription works without API credits. Claude Code's own sandbox and
- * permission rules seal each head inside its clone; see claudeSettings().
+ * permission rules seal each fork inside its clone; see claudeSettings().
  */
 export interface ClaudeCodeHeadConfig {
   id: string;
@@ -31,11 +32,11 @@ export interface ClaudeCodeHeadConfig {
 /**
  * Places under ~ no head may read or edit: credentials, app data, shell
  * history, Claude Code's own config. Claude Code's file tools can't be put
- * behind an allowlist the way Forkbomb's own sandbox does it, so this list is
+ * behind an allowlist the way our own Seatbelt sandbox does it, so this list is
  * deliberately broad.
  */
 const SECRET_HOME = [
-  ".ssh", ".aws", ".gnupg", ".forkbomb/.env", ".docker", ".kube", ".netrc", ".npmrc", ".pypirc", ".git-credentials",
+  ".ssh", ".aws", ".gnupg", `.${BRAND.slug}/.env`, `.${LEGACY_SLUG}/.env`, ".docker", ".kube", ".netrc", ".npmrc", ".pypirc", ".git-credentials",
   ".config", ".gitconfig", ".claude", ".claude.json", ".cache",
   ".zsh_history", ".bash_history", ".zsh_sessions", ".python_history", ".node_repl_history", ".psql_history", ".mysql_history", ".lesshst", ".viminfo",
   "Library/Keychains", "Library/Application Support", "Library/Containers", "Library/Group Containers",

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { FOOTER, GITHUB_URL, SITE } from "../config";
 import { Button } from "./Button";
-import { Logo } from "./Logo";
+import { Glyph, Logo } from "./Logo";
 
 export function SiteFooter() {
   return (
@@ -11,8 +11,11 @@ export function SiteFooter() {
           <div className="site-footer__brand">
             <Logo />
             <p>
-              Fork your coding agent into sandboxed heads. Your test suite picks the survivor. Open source, runs on your
-              own machine. {SITE.platform}.
+              Fork your coding agent into sandboxed copies of your repo. Your test suite kills the losers and keeps the
+              patch that passes. Open source, runs on your own machine. {SITE.platform}.
+            </p>
+            <p>
+              <Glyph />
             </p>
             <div className="cluster">
               <Button href={GITHUB_URL} external size="sm" icon="github">
@@ -41,8 +44,13 @@ export function SiteFooter() {
             </nav>
           ))}
         </div>
+        <p className="site-footer__mega" aria-hidden="true">
+          {SITE.wordmark}
+        </p>
         <div className="site-footer__base">
-          <span>© 2026 Forkbomb contributors. {SITE.license} licensed.</span>
+          <span>
+            © 2026 {SITE.name} contributors. {SITE.license} licensed.
+          </span>
           <ul>
             <li>Not affiliated with Anthropic.</li>
             <li>Draft — not indexed</li>

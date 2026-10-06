@@ -3,7 +3,7 @@ import { Icon } from "@/app/components";
 import s from "../security.module.css";
 
 /** Set flags, paths and file names in inline mono so they never break mid-token. */
-const TOKEN_RE = /(--[a-z][a-z-]*|~\/[\w.<>/-]*|\.git\b|127\.0\.0\.1|events\.jsonl|forkbomb export|CLAUDE\.md|\.claude\/settings\.json)/g;
+const TOKEN_RE = /(--[a-z][a-z-]*|~\/[\w.<>/-]*|\.git\b|127\.0\.0\.1|events\.jsonl|forkbomb export|forkbomb_sk_|CLAUDE\.md|\.claude\/settings\.json)/g;
 export function Fx({ text }: { text: string }) {
   const parts = text.split(TOKEN_RE);
   return (
@@ -43,7 +43,7 @@ export function TrustBoundary() {
         <ul className={s.nodes}>
           <Node title="Model output">Any instruction it decides to follow.</Node>
           <Node title="Repo content">README, comments, fixtures, issue text, dependency output. Any of it can steer the model.</Node>
-          <Node title="Head" mono>
+          <Node title="Fork" mono>
             bash + editor, working in its own APFS clone
           </Node>
         </ul>
@@ -63,7 +63,7 @@ export function TrustBoundary() {
           Trusted · Forkbomb process
         </p>
         <ul className={s.nodes}>
-          <Node title="Orchestrator">Forks heads, severs losers, records every event.</Node>
+          <Node title="Orchestrator">Calls fork(), kills the losers, records every event.</Node>
           <Node title="Judge">Applies the patch to a fresh clone and runs your tests there, sandboxed.</Node>
           <Node title="Live UI">Served on 127.0.0.1 only.</Node>
         </ul>
@@ -80,13 +80,13 @@ export function TrustBoundary() {
       <div className={`${s.zone} ${s.zoneOff}`}>
         <p className={s.zoneLabel}>
           <span className={s.zoneKey} aria-hidden="true" />
-          Off limits to heads
+          Off limits to forks
         </p>
         <ul className={s.nodes}>
           <Node title="Credentials" mono>
             ~/.ssh ~/.aws ~/.gnupg ~/.config Keychains
           </Node>
-          <Node title="Your keys">No API keys or tokens in the head&apos;s environment.</Node>
+          <Node title="Your keys">No API keys or tokens in the fork&apos;s environment.</Node>
           <Node title="The network">Loopback only. No DNS resolver.</Node>
           <Node title="History" mono>
             .git is read-only
@@ -95,7 +95,7 @@ export function TrustBoundary() {
       </div>
 
       <figcaption id="boundary-cap" className={s.figcap}>
-        Trust boundary. The only thing that crosses from a head to Forkbomb is its patch, as text. Everything marked
+        Trust boundary. The only thing that crosses from a fork to Forkbomb is its patch, as text. Everything marked
         off limits is denied by the sandbox, not by asking the model nicely.
       </figcaption>
     </figure>

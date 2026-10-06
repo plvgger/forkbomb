@@ -5,22 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>Replay: a recorded Forkbomb run — Forkbomb</title>
-  <meta name="description" content="Replay of a real Forkbomb run from 2026-10-05: four heads race on a demo calc repo, three are severed, head 1.04 passes 14 of 14 tests in 38.7 s.">
-  <meta name="theme-color" content="#07090b">
-  <link rel="canonical" href="https://forkbomb-heads.vercel.app/replay">
+  <meta name="description" content="Replay of a real Forkbomb run from 2026-10-05: four forks race on a demo calc repo, three are killed, fork 1.04 passes 14 of 14 tests and exits 0 in 38.7 s.">
+  <meta name="theme-color" content="#0a0a0b">
+  <link rel="canonical" href="/replay">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Forkbomb">
   <meta property="og:title" content="Replay: a recorded Forkbomb run — Forkbomb">
-  <meta property="og:description" content="Four heads race. Three are severed. One passes 14 of 14 tests. Every event comes from the run's own log.">
-  <meta property="og:url" content="https://forkbomb-heads.vercel.app/replay">
-  <meta property="og:image" content="https://forkbomb-heads.vercel.app/opengraph-image">
+  <meta property="og:description" content="Four forks race. Three get SIGKILL. One passes 14 of 14 tests and exits 0. Every event comes from the run's own log.">
+  <meta property="og:url" content="/replay">
+  <meta property="og:image" content="/opengraph-image">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:image" content="https://forkbomb-heads.vercel.app/twitter-image">
+  <meta name="twitter:image" content="/twitter-image">
   <link rel="stylesheet" href="/replay/style.css">
   <style>
     /* Embed mode (?embed=1): chromeless tree that scales to fit its frame. */
-    html[data-embed] .top, html[data-embed] .skip, html[data-embed] .task, html[data-embed] .side, html[data-embed] .replay, html[data-embed] .tiles { display: none !important; }
+    html[data-embed] .sitenav, html[data-embed] .sitefoot, html[data-embed] .top, html[data-embed] .skip, html[data-embed] .task, html[data-embed] .side, html[data-embed] .replay, html[data-embed] .tiles { display: none !important; }
     html[data-embed], html[data-embed] body { background: transparent; height: 100%; overflow: hidden; }
     html[data-embed] body { min-height: 0; }
     html[data-embed] .stage { display: block; flex: 1; padding: 0; height: 100%; }
@@ -40,18 +40,25 @@
     })();
   </script>
   <a class="skip" href="#treeWrap">Skip to the replay</a>
-  <header class="top">
-    <a class="brand" href="/" aria-label="Forkbomb home">
-      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
-        <path d="M16 29V17M16 17C16 11 9 11 6 5M16 17C16 11 23 11 26 5M16 17V4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-        <circle cx="6" cy="5" r="2.4" fill="currentColor"/><circle cx="16" cy="4" r="2.4" fill="currentColor"/><circle cx="26" cy="5" r="2.4" fill="currentColor"/>
-      </svg>
-      <span class="word">FORKBOMB</span>
-    </a>
-    <nav class="sitelinks" aria-label="Site">
-      <a href="/docs">Docs</a>
-      <a href="/security">Security</a>
+  <!-- Site nav: same pill bar and links as the Next.js site (app/components/SiteNav.tsx). -->
+  <header class="sitenav">
+    <nav class="sitenav__inner" aria-label="Primary">
+      <a class="brand" href="/" aria-label="Forkbomb home">
+        <svg class="mark" viewBox="0 0 8 8" shape-rendering="crispEdges" aria-hidden="true" fill="currentColor"><rect x="0" y="0" width="1" height="1"/><rect x="2" y="0" width="1" height="1"/><rect x="5" y="0" width="1" height="1"/><rect x="7" y="0" width="1" height="1" fill="#3cf2b4"/><rect x="0" y="1" width="1" height="1"/><rect x="2" y="1" width="1" height="1"/><rect x="5" y="1" width="1" height="1"/><rect x="7" y="1" width="1" height="1"/><rect x="0" y="2" width="1" height="1"/><rect x="1" y="2" width="1" height="1"/><rect x="2" y="2" width="1" height="1"/><rect x="5" y="2" width="1" height="1"/><rect x="6" y="2" width="1" height="1"/><rect x="7" y="2" width="1" height="1"/><rect x="1" y="3" width="1" height="1"/><rect x="6" y="3" width="1" height="1"/><rect x="1" y="4" width="1" height="1"/><rect x="2" y="4" width="1" height="1"/><rect x="3" y="4" width="1" height="1"/><rect x="4" y="4" width="1" height="1"/><rect x="5" y="4" width="1" height="1"/><rect x="6" y="4" width="1" height="1"/><rect x="3" y="5" width="1" height="1"/><rect x="4" y="5" width="1" height="1"/><rect x="3" y="6" width="1" height="1"/><rect x="4" y="6" width="1" height="1"/><rect x="2" y="7" width="1" height="1"/><rect x="3" y="7" width="1" height="1"/><rect x="4" y="7" width="1" height="1"/><rect x="5" y="7" width="1" height="1"/></svg>
+        <svg class="word" viewBox="0 0 47 7" shape-rendering="crispEdges" aria-hidden="true"><path fill="currentColor" d="M2 0h2v1h-2zM1 1h1v1h-1zM0 2h4v1h-4zM1 3h1v1h-1zM1 4h1v1h-1zM1 5h1v1h-1zM1 6h1v1h-1zM7 2h3v1h-3zM6 3h1v1h-1zM10 3h1v1h-1zM6 4h1v1h-1zM10 4h1v1h-1zM6 5h1v1h-1zM10 5h1v1h-1zM7 6h3v1h-3zM12 2h1v1h-1zM14 2h2v1h-2zM12 3h2v1h-2zM16 3h1v1h-1zM12 4h1v1h-1zM12 5h1v1h-1zM12 6h1v1h-1zM18 0h1v1h-1zM18 1h1v1h-1zM18 2h1v1h-1zM21 2h1v1h-1zM18 3h1v1h-1zM20 3h1v1h-1zM18 4h2v1h-2zM18 5h1v1h-1zM20 5h1v1h-1zM18 6h1v1h-1zM21 6h1v1h-1zM24 0h1v1h-1zM24 1h1v1h-1zM24 2h4v1h-4zM24 3h1v1h-1zM28 3h1v1h-1zM24 4h1v1h-1zM28 4h1v1h-1zM24 5h1v1h-1zM28 5h1v1h-1zM24 6h4v1h-4zM31 2h3v1h-3zM30 3h1v1h-1zM34 3h1v1h-1zM30 4h1v1h-1zM34 4h1v1h-1zM30 5h1v1h-1zM34 5h1v1h-1zM31 6h3v1h-3zM36 2h2v1h-2zM39 2h1v1h-1zM36 3h1v1h-1zM38 3h1v1h-1zM40 3h1v1h-1zM36 4h1v1h-1zM38 4h1v1h-1zM40 4h1v1h-1zM36 5h1v1h-1zM38 5h1v1h-1zM40 5h1v1h-1zM36 6h1v1h-1zM38 6h1v1h-1zM40 6h1v1h-1zM42 0h1v1h-1zM42 1h1v1h-1zM42 2h4v1h-4zM42 3h1v1h-1zM46 3h1v1h-1zM42 4h1v1h-1zM46 4h1v1h-1zM42 5h1v1h-1zM46 5h1v1h-1zM42 6h4v1h-4z"/></svg>
+      </a>
+      <ul class="sitenav__links">
+        <li><a href="/">Product</a></li>
+        <li><a href="/docs">Docs</a></li>
+        <li><a href="/burns">Burns</a></li>
+        <li><a href="/security">Security</a></li>
+        <li><a class="sitenav__token" href="/token">$FORKBOMB</a></li>
+      </ul>
+      <a class="sitenav__cta" href="/app">Open app</a>
     </nav>
+  </header>
+
+  <header class="top" aria-label="Run status">
     <div class="status"><span id="status" class="pill idle">WAITING</span></div>
     <div class="meta">
       <span><b id="elapsed">0.0s</b> elapsed</span>
@@ -66,10 +73,10 @@
   </section>
 
   <section class="tiles">
-    <div class="tile"><span class="k">FORK</span><span class="v" id="tFork">—</span><span class="s" id="tForkS">per head</span></div>
-    <div class="tile"><span class="k">LOGICAL</span><span class="v" id="tLogical">—</span><span class="s" id="tLogicalS">across all heads</span></div>
+    <div class="tile"><span class="k">FORK</span><span class="v" id="tFork">—</span><span class="s" id="tForkS">per fork</span></div>
+    <div class="tile"><span class="k">LOGICAL</span><span class="v" id="tLogical">—</span><span class="s" id="tLogicalS">across all forks</span></div>
     <div class="tile"><span class="k">PHYSICAL</span><span class="v" id="tPhysical">—</span><span class="s">extra disk used</span></div>
-    <div class="tile"><span class="k">ISOLATION</span><span class="v" id="tSandbox">—</span><span class="s" id="tSandboxS">per head</span></div>
+    <div class="tile"><span class="k">ISOLATION</span><span class="v" id="tSandbox">—</span><span class="s" id="tSandboxS">per fork</span></div>
   </section>
 
   <h1 class="sr-only">Replay of a recorded Forkbomb run</h1>
@@ -78,13 +85,13 @@
       <p class="label">RECORDED RUN · 2026-10-05 · 20261005-155223</p>
       <p>The replay needs JavaScript. This is how the run ended:</p>
       <ol class="nojsTree">
-        <li><b>BODY</b> demo calc repo · baseline 4/14 passing</li>
-        <li class="cut"><b>1.01</b> surgeon · severed</li>
-        <li class="cut"><b>1.02</b> root-cause · severed</li>
-        <li class="cut"><b>1.03</b> test-driven · severed</li>
-        <li class="won"><b>1.04</b> rewriter · survivor · 14/14 passing · 94 lines in 1 file</li>
+        <li><b>PID 1</b> parent · demo calc repo · baseline 4/14 passing</li>
+        <li class="cut"><b>1.01</b> surgeon · killed (SIGKILL)</li>
+        <li class="cut"><b>1.02</b> root-cause · killed (SIGKILL)</li>
+        <li class="cut"><b>1.03</b> test-driven · killed (SIGKILL)</li>
+        <li class="won"><b>1.04</b> rewriter · exit 0 · 14/14 passing · 94 lines in 1 file</li>
       </ol>
-      <p class="muted">Forked in 1.13 ms per head. Whole run 38.7 s. <a href="/">Back to Forkbomb</a></p>
+      <p class="muted">Forked in 1.13 ms per fork. Whole run 38.7 s. <a href="/">Back to Forkbomb</a></p>
     </section>
   </noscript>
   <main class="stage" id="main">
@@ -95,7 +102,7 @@
     </div>
     <aside class="side">
       <div class="panel" id="winnerPanel" hidden>
-        <div class="panelHead"><span class="label">SURVIVOR</span><span id="winnerId"></span></div>
+        <div class="panelHead"><span class="label">EXIT 0 · PATCH</span><span id="winnerId"></span></div>
         <p id="winnerSummary" class="winnerSummary"></p>
         <pre id="diff" class="diff"></pre>
       </div>
@@ -118,6 +125,18 @@
       </select>
     </label>
     <span class="muted">Replay of a recorded run. Long waits are compressed.</span>
+  </footer>
+
+  <footer class="sitefoot">
+    <nav aria-label="Footer">
+      <a href="/">Product</a>
+      <a href="/docs">Docs</a>
+      <a href="/burns">Burns</a>
+      <a href="/security">Security</a>
+      <a href="/token">$FORKBOMB</a>
+      <a href="/app">Open app</a>
+    </nav>
+    <p>© 2026 Forkbomb contributors. MIT licensed. Not affiliated with Anthropic.</p>
   </footer>
 
   <script src="/replay/data.js"></script>

@@ -29,10 +29,10 @@
   </section>
 
   <section class="tiles">
-    <div class="tile"><span class="k">FORK</span><span class="v" id="tFork">—</span><span class="s" id="tForkS">per head</span></div>
-    <div class="tile"><span class="k">LOGICAL</span><span class="v" id="tLogical">—</span><span class="s" id="tLogicalS">across all heads</span></div>
+    <div class="tile"><span class="k">FORK</span><span class="v" id="tFork">—</span><span class="s" id="tForkS">per fork</span></div>
+    <div class="tile"><span class="k">LOGICAL</span><span class="v" id="tLogical">—</span><span class="s" id="tLogicalS">across all forks</span></div>
     <div class="tile"><span class="k">PHYSICAL</span><span class="v" id="tPhysical">—</span><span class="s">extra disk used</span></div>
-    <div class="tile"><span class="k">ISOLATION</span><span class="v" id="tSandbox">—</span><span class="s" id="tSandboxS">per head</span></div>
+    <div class="tile"><span class="k">ISOLATION</span><span class="v" id="tSandbox">—</span><span class="s" id="tSandboxS">per fork</span></div>
   </section>
 
   <main class="stage">
@@ -43,7 +43,7 @@
     </div>
     <aside class="side">
       <div class="panel" id="winnerPanel" hidden>
-        <div class="panelHead"><span class="label">SURVIVOR</span><span id="winnerId"></span></div>
+        <div class="panelHead"><span class="label">EXIT 0</span><span id="winnerId"></span></div>
         <p id="winnerSummary" class="winnerSummary"></p>
         <pre id="diff" class="diff"></pre>
       </div>

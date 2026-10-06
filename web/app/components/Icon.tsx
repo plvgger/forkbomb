@@ -53,6 +53,33 @@ const PATHS = {
     </>
   ),
   play: <path d="M7 5l12 7-12 7V5z" />,
+  wallet: (
+    <>
+      <path d="M4 7a2 2 0 0 1 2-2h11v4" />
+      <rect x="4" y="7" width="16" height="12" rx="2" />
+      <path d="M16 13h.01" />
+    </>
+  ),
+  flame: <path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1.2-3.6 2.2-4.6.3 1.6 1.1 2.6 2.3 3.1C11 9 11 6 12 3z" />,
+  key: (
+    <>
+      <circle cx="8" cy="15" r="4" />
+      <path d="M11 12l8-8M16 7l2 2M14 9l2 2" />
+    </>
+  ),
+  cpu: (
+    <>
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+      <path d="M10 10h4v4h-4zM9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" />
+    </>
+  ),
+  chart: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
+  skull: (
+    <>
+      <path d="M12 3a8 8 0 0 0-5 14.2V20h10v-2.8A8 8 0 0 0 12 3z" />
+      <path d="M9 11h.01M15 11h.01M10 20v-2M14 20v-2" />
+    </>
+  ),
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
   github: (
     <path

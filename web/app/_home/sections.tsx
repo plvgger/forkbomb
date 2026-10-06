@@ -2,246 +2,316 @@ import type { ReactNode } from "react";
 import {
   Badge,
   Button,
-  Callout,
+  CAChip,
   CodeBlock,
+  CrtPanel,
   Eyebrow,
+  ForkBombHero,
+  Glyph,
   Icon,
-  Mark,
+  Marquee,
+  PixelHeading,
+  PsTable,
   ReplayFrame,
   Reveal,
-  RunTree,
   Section,
-  SectionHeader,
-  Stat,
-  StatGrid,
   Terminal,
   cx,
-  type CodeLine,
+  type IconName,
+  type MarqueeItem,
 } from "../components";
 import {
+  APP_URL,
   BENCH,
   GITHUB_URL,
-  INSTALL,
   INSTALL_SCRIPT,
   ISSUES_URL,
-  REPLAY_URL,
-  REQUIREMENTS,
   RUN,
+  RUN_END_S,
   RUN_TRANSCRIPT,
+  SITE,
+  STATUS,
   TEST_COUNT,
+  TOKEN_MEMO_PREFIX,
 } from "../config";
-import diffRows from "../diff.json";
-import { LoopDiagram } from "./LoopDiagram";
+import { DetonationDiagram } from "./DetonationDiagram";
+import { LedgerPeek } from "./LedgerPeek";
 import s from "./home.module.css";
 
 const nf = (n: number) => n.toLocaleString("en-US");
+const MEMO = `${TOKEN_MEMO_PREFIX}<workspaceId>`;
+const POOL_STATUS = STATUS.hostedPoolLive ? "live" : "coming online";
+
+/** Section heading block: eyebrow + pixel h2 + lede. */
+function Head({
+  id,
+  index,
+  eyebrow,
+  title,
+  lede,
+  center,
+  className,
+  children,
+}: {
+  id: string;
+  index?: string;
+  eyebrow: ReactNode;
+  title: ReactNode;
+  lede?: ReactNode;
+  center?: boolean;
+  className?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <header className={cx(s.head, center && s.headCenter, className)}>
+      <Eyebrow index={index}>{eyebrow}</Eyebrow>
+      <PixelHeading as="h2" size="lg" id={id}>
+        {title}
+      </PixelHeading>
+      {lede && <p className="lede">{lede}</p>}
+      {children}
+    </header>
+  );
+}
 
 /* ================================================================== */
 /* Hero                                                                */
 /* ================================================================== */
 export function Hero() {
-  const spec: [string, ReactNode][] = [
-    ["Platform", "macOS on APFS"],
-    ["Sandbox", "Seatbelt, per head"],
-    ["Engines", "Claude Code plan or API key"],
-    ["License", "MIT"],
-    ["Own suite", `${TEST_COUNT} automated tests`],
-    ["Status", "Pre-release. Install from source"],
+  const facts: { k: string; v: ReactNode }[] = [
+    { k: "fork()", v: <>{RUN.forkMsEach} ms</> },
+    { k: "forks", v: <>{RUN.heads.length} → 1</> },
+    { k: "race", v: <>{RUN.durationS} s</> },
+    { k: "vs copy", v: <>{BENCH.speedup}</> },
+    { k: "tests", v: <>{TEST_COUNT}</> },
   ];
   return (
-    <Section className={s.hero} labelledBy="hero-title">
-      <div className={s.heroTop}>
+    <section className={s.hero} aria-labelledby="hero-title">
+      <div className={cx("container", s.heroGrid)}>
         <div className={s.heroCopy}>
-          <Eyebrow>Open-source CLI · macOS</Eyebrow>
-          <h1 id="hero-title" className={cx("display", s.heroTitle)}>
-            <span>Fork your agent.</span> <span className={s.heroTitleSoft}>Let the tests pick the survivor.</span>
-          </h1>
-          <p className={cx("lede", s.heroLede)}>
-            Forkbomb clones your repo into sandboxed heads in milliseconds, gives each head a different strategy, and
-            keeps the one whose patch passes your test suite.
+          <p className={s.heroPrompt}>
+            <span className={s.heroPs1} aria-hidden="true">
+              $
+            </span>
+            <Glyph glow />
+            <span className={cx(s.heroCursor, "cursor")} aria-hidden="true" />
           </p>
-          <div className={cx("cluster", s.heroCtas)}>
-            <Button href="/docs#install" variant="primary" size="lg" iconRight="arrowRight">
-              Install from source
-            </Button>
-            <Button href={REPLAY_URL} native size="lg" icon="play">
-              Watch a real run
-            </Button>
-          </div>
+          <h1 id="hero-title" className={s.heroTitle}>
+            <span className={cx(s.heroWord, "crt-glow")} translate="no">
+              {SITE.wordmark}
+            </span>
+            <span className="sr-only">: </span>
+            <span className={s.heroPitch}>
+              Fork your coding agent. Keep the one that <span className="text-ok">exits&nbsp;0</span>.
+            </span>
+          </h1>
         </div>
 
-        <figure className={s.heroRun} aria-labelledby="hero-run-cap">
-          <div className={s.heroRunBar}>
-            <span className="terminal__dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-            <span className={s.heroRunTitle}>forkbomb run · {RUN.id}</span>
-            <Badge tone="accent" dot>
-              survivor found
-            </Badge>
+        <p className={s.heroLede}>
+          {SITE.name} clones your repo into sandboxed forks in milliseconds and gives each one a different strategy.
+          Your test suite judges every patch: the losers get <code>kill -9</code>, the survivor&apos;s patch is yours.
+        </p>
+
+        <div className={s.heroVisual}>
+          <ForkBombHero />
+        </div>
+
+        <div className={s.heroActions}>
+          <div className={cx("cluster", s.heroCtas)}>
+            <Button href={APP_URL} variant="primary" size="lg" iconRight="arrowRight">
+              Open app
+            </Button>
+            <Button href="/docs" variant="outline" size="lg">
+              Read the docs
+            </Button>
           </div>
-          <div className={s.heroRunCmd}>
-            <span className="accent" aria-hidden="true">
-              ${" "}
+          <div className={s.heroCa}>
+            <CAChip />
+            <span className={s.heroCaMeta}>
+              {SITE.ticker} · Solana · {STATUS.tokenLive ? "live" : "not launched yet"}
             </span>
-            {RUN_TRANSCRIPT[0].text}
           </div>
-          <div className={s.heroRunBody}>
-            <RunTree />
-          </div>
-          <figcaption id="hero-run-cap" className={s.heroRunFoot}>
-            <span>
-              <b>{RUN.forkMsEach} ms</b> fork per head
-            </span>
-            <span>
-              <b>{RUN.severed}</b> severed
-            </span>
-            <span>
-              <b>{RUN.durationS} s</b> whole run
-            </span>
-            <span className={s.heroRunSrc}>recorded {RUN.date}</span>
-          </figcaption>
-        </figure>
+        </div>
       </div>
 
-      <div className={s.heroBase}>
-        <CodeBlock
-          className={s.heroCode}
-          title="Install from source"
-          lang="sh"
-          code={INSTALL_SCRIPT}
-          ariaLabel="Install commands"
-        />
-        <dl className={s.spec} aria-label="Forkbomb at a glance">
-          {spec.map(([k, v]) => (
-            <div key={k} className={s.specRow}>
-              <dt>{k}</dt>
-              <dd>{v}</dd>
+      <div className="container">
+        <dl className={s.facts} aria-label="Real numbers from the recorded run, the benchmark and the test suite">
+          {facts.map((f) => (
+            <div key={f.k} className={s.fact}>
+              <dt>{f.k}</dt>
+              <dd>{f.v}</dd>
             </div>
           ))}
         </dl>
+        <p className={s.factsNote}>
+          Recorded run {RUN.date} · bench on {BENCH.machine} · {TEST_COUNT} automated tests in the CLI. The fork-tree
+          animation is an illustration, not a recording.
+        </p>
       </div>
-    </Section>
+    </section>
   );
 }
 
+const HERO_MARQUEE: MarqueeItem[] = [
+  { text: SITE.glyph, tone: "hot" },
+  "fork()",
+  "race",
+  "judge",
+  { text: "kill -9", tone: "hot" },
+  { text: "exit 0", tone: "ok" },
+  "clonefile(2)",
+  SITE.ticker,
+];
+
+export function GlyphMarquee() {
+  return <Marquee items={HERO_MARQUEE} speed={46} className={s.marquee} />;
+}
+
 /* ================================================================== */
-/* 01 The real run                                                     */
+/* 01 Recorded run: ps + transcript + replay                           */
 /* ================================================================== */
 export function RunSection() {
-  const ledger: { k: string; v: ReactNode; note: ReactNode; tone?: "accent" | "danger" }[] = [
+  const foot: { k: string; v: ReactNode; tone?: "ok" | "signal" }[] = [
+    { k: "baseline", v: `${RUN.baseline.passing}/${RUN.baseline.total}` },
+    { k: "fork()", v: `${RUN.forkMsEach} ms each` },
+    { k: "killed", v: RUN.severed, tone: "signal" },
     {
-      k: "Baseline",
-      v: (
-        <>
-          {RUN.baseline.passing}/{RUN.baseline.total}
-        </>
-      ),
-      note: `${RUN.baseline.failing} tests failing`,
+      k: "exit 0",
+      v: `${RUN.winner.id} · ${RUN.winner.passed}/${RUN.winner.total}`,
+      tone: "ok",
     },
-    { k: "Heads", v: RUN.heads.length, note: RUN.heads.map((h) => h.strategy).join(", ") },
-    { k: "Fork", v: <>{RUN.forkMsEach}<small>ms</small></>, note: "per head, apfs-clonefile" },
-    {
-      k: "Survivor",
-      v: RUN.winner.id,
-      note: `${RUN.winner.strategy} · ${RUN.winner.passed}/${RUN.winner.total} passing`,
-      tone: "accent",
-    },
-    { k: "Severed", v: RUN.severed, note: `cut when ${RUN.winner.id} passed`, tone: "danger" },
-    { k: "Patch", v: <>{RUN.patch.lines}<small>lines</small></>, note: `${RUN.patch.files} file changed` },
-    { k: "Wall time", v: <>{RUN.durationS}<small>s</small></>, note: "fork to survivor" },
+    { k: "patch", v: `${RUN.patch.lines} lines · ${RUN.patch.files} file` },
+    { k: "wall", v: `${RUN.durationS} s` },
   ];
   return (
-    <Section id="run" size="sm" labelledBy="run-h">
-      <div className={s.runHead}>
-        <SectionHeader
-          id="run-h"
-          className={s.headerTight}
-          index="01"
-          eyebrow="Recorded run"
-          title={`${RUN.heads.length} heads. 1 survivor. ${RUN.durationS} seconds.`}
-          lede={`A real run from ${RUN.date}: ${RUN.engine}, a ${RUN.repo} with ${RUN.baseline.failing} failing tests. Every event in the replay comes from the run's own log.`}
+    <Section id="run" labelledBy="run-h">
+      <Head
+        id="run-h"
+        index="01"
+        eyebrow={`Recorded run · ${RUN.date}`}
+        title={
+          <>
+            {RUN.heads.length} forks. {RUN.severed} <span className="hl">killed</span>. 1{" "}
+            <span className="hl-ok">exit&nbsp;0</span>.
+          </>
+        }
+        lede={`A real race: ${RUN.engine}, a ${RUN.repo} with ${RUN.baseline.failing} of ${RUN.baseline.total} tests failing. Fork ${RUN.winner.id} (${RUN.winner.strategy}) passed all ${RUN.winner.total} first, so the other ${RUN.severed} were killed.`}
+      />
+
+      <div className={s.runGrid}>
+        <CrtPanel
+          flush
+          className={s.psPanel}
+          title="ps -ef | grep forkbomb"
+          status={
+            <Badge tone="ok" dot>
+              exit 0
+            </Badge>
+          }
+        >
+          <PsTable />
+          <dl className={s.psFoot} aria-label="Run summary">
+            {foot.map((f) => (
+              <div key={f.k} className={cx(s.psFootCell, f.tone === "ok" && s.isOk, f.tone === "signal" && s.isSignal)}>
+                <dt>{f.k}</dt>
+                <dd>{f.v}</dd>
+              </div>
+            ))}
+          </dl>
+        </CrtPanel>
+
+        <Terminal
+          className={s.runTerm}
+          title={`recorded output · run ${RUN.id}`}
+          status={
+            <Badge tone="ok" dot>
+              {RUN.winner.passed}/{RUN.winner.total}
+            </Badge>
+          }
+          lines={RUN_TRANSCRIPT}
+          animate
+          ariaLabel="Terminal output from the recorded run, trimmed"
         />
-        <Badge tone="neutral" className={s.runBadge}>
-          run {RUN.id}
-        </Badge>
       </div>
 
-      <ReplayFrame eager title={`Recorded run · ${RUN.date}`} />
-
-      <dl className={s.ledger} aria-label="Run summary">
-        {ledger.map((c) => (
-            <div key={c.k} className={cx(s.ledgerCell, c.tone === "accent" && s.isAccent, c.tone === "danger" && s.isDanger)}>
-              <dt>{c.k}</dt>
-              <dd>
-                <span className={s.ledgerValue}>{c.v}</span>
-                <span className={s.ledgerNote}>{c.note}</span>
-              </dd>
-            </div>
-        ))}
-      </dl>
+      <p className={s.replayNote}>
+        <span className={s.replayDot} aria-hidden="true" />
+        Replay, straight from the run&apos;s own event log. Every fork has resolved by {RUN_END_S} s.
+      </p>
+      <ReplayFrame className={cx("crt", s.replay)} title={`forkbomb replay · run ${RUN.id}`} />
     </Section>
   );
 }
 
 /* ================================================================== */
-/* 02 How it works                                                     */
+/* 02 How a detonation works                                           */
 /* ================================================================== */
-const STEPS: { n: string; t: string; d: ReactNode }[] = [
+const STEPS: {
+  n: string;
+  t: string;
+  cmd: string;
+  d: ReactNode;
+  tone?: "signal" | "ok";
+}[] = [
   {
     n: "01",
     t: "Fork",
-    d: (
-      <>
-        Forkbomb snapshots your repo once, then clones it into N heads with <code>clonefile(2)</code>. Blocks are shared
-        until a head writes, so a head costs metadata, not a copy.
-      </>
-    ),
+    cmd: "clonefile(2)",
+    d: "Your repo is snapshotted once as pid 1, then cloned into N forks. Blocks are shared until a fork writes, so a fork costs metadata, not a copy.",
   },
   {
     n: "02",
     t: "Race",
-    d: "Each head is a Claude agent with its own strategy: surgeon, root-cause, test-driven, rewriter and more. Different approaches fail in different ways.",
+    cmd: "--forks N",
+    d: "Each fork is a coding agent with its own strategy: surgeon, root-cause, test-driven, rewriter and more. Different approaches fail differently.",
   },
   {
     n: "03",
     t: "Judge",
-    d: "When a head stops, its diff minus any test edits goes onto a fresh clone, and your test command runs there.",
+    cmd: '--test "npm test"',
+    d: "When a fork stops, its diff minus any test edits goes onto a fresh clone, and your test command runs there.",
   },
   {
     n: "04",
-    t: "Sever",
-    d: "In race mode the first head to pass wins and the rest are cut mid-run. In best mode all finish and the smallest passing diff wins.",
+    t: "Kill",
+    cmd: "kill -9",
+    tone: "signal",
+    d: "Race mode: the first fork to pass wins and the rest are killed mid-run. Best mode lets all finish and keeps the smallest passing diff.",
   },
   {
     n: "05",
-    t: "Grow",
-    d: "If no head passes, the best one's verified state seeds the next round, with a note on where it left off.",
+    t: "Exit 0",
+    cmd: "--apply",
+    tone: "ok",
+    d: "The survivor's patch is yours to read and apply. No pass? The best fork's verified state seeds the next round.",
   },
 ];
 
 export function HowItWorks() {
   return (
     <Section id="how-it-works" tone="inset" labelledBy="how-h">
-      <SectionHeader
+      <Head
         id="how-h"
         index="02"
-          eyebrow="How it works"
-        title="Fork, race, judge, sever, grow."
+        eyebrow="How a detonation works"
+        title={
+          <>
+            Fork. Race. Judge. Kill. <span className="hl-ok">Exit&nbsp;0.</span>
+          </>
+        }
         lede="One loop, drawn from the run above. Every step is plain mechanics you can read in the source."
       />
       <Reveal className={s.diagramWrap}>
-        <LoopDiagram />
+        <DetonationDiagram />
       </Reveal>
       <ol className={s.steps}>
         {STEPS.map((st) => (
-          <li key={st.n} className={s.step}>
+          <li key={st.n} className={cx(s.step, st.tone === "signal" && s.stepSignal, st.tone === "ok" && s.stepOk)}>
             <span className={s.stepN} aria-hidden="true">
               {st.n}
             </span>
             <h3 className={s.stepT}>{st.t}</h3>
+            <code className={s.stepCmd}>{st.cmd}</code>
             <p className={s.stepD}>{st.d}</p>
           </li>
         ))}
@@ -251,26 +321,210 @@ export function HowItWorks() {
 }
 
 /* ================================================================== */
-/* 03 Benchmark                                                        */
+/* 03 Burn for compute                                                 */
 /* ================================================================== */
-function BarGroup({
+const FLOW: {
+  icon: IconName;
+  t: string;
+  d: ReactNode;
+  tag?: string;
+  tagTone?: "signal" | "warn";
+}[] = [
+  { icon: "wallet", t: "Your wallet", d: <>holds {SITE.ticker}</> },
+  {
+    icon: "flame",
+    t: "Burn tx",
+    d: (
+      <>
+        with memo <code className={s.flowMemo}>{MEMO}</code>
+      </>
+    ),
+    tag: "Solana",
+    tagTone: "signal",
+  },
+  { icon: "shield", t: "Verified", d: "server reads the burn on-chain" },
+  { icon: "chart", t: "USD credit", d: "amount × TWAP at burn time" },
+  {
+    icon: "cpu",
+    t: "Hosted forks",
+    d: <code>--engine hosted</code>,
+    tag: POOL_STATUS,
+    tagTone: "warn",
+  },
+];
+
+function BurnFlow() {
+  return (
+    <ol className={s.flow} aria-label="How a burn becomes compute">
+      {FLOW.map((f, i) => (
+        <li key={f.t} className={s.flowNode}>
+          <span className={s.flowIdx} aria-hidden="true">
+            {String(i + 1).padStart(2, "0")}
+          </span>
+          <span className={s.flowIcon} aria-hidden="true">
+            <Icon name={f.icon} size={20} />
+          </span>
+          <span className={s.flowT}>{f.t}</span>
+          <span className={s.flowD}>{f.d}</span>
+          {f.tag && (
+            <Badge tone={f.tagTone} className={s.flowTag}>
+              {f.tag}
+            </Badge>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+const BURN_STEPS: { t: string; d: ReactNode }[] = [
+  {
+    t: "Burn",
+    d: (
+      <>
+        Send one burn transaction from your wallet with the memo <code>{MEMO}</code>. Burned tokens are gone for good.
+      </>
+    ),
+  },
+  {
+    t: "Credit",
+    d: "The server reads the burn from Solana and credits your workspace in USD at the token's time-weighted price when the burn lands. A one-tick spike can't be timed.",
+  },
+  {
+    t: "Compute",
+    d: (
+      <>
+        Credit pays for hosted forks: our GPU coding model behind an OpenAI-compatible API that{" "}
+        <code>--engine hosted</code> calls. Later: bigger models, more forks per race, warm GPUs.
+      </>
+    ),
+  },
+];
+
+const NOPE = ["No refunds", "No transfers", "No buybacks", "No yield", "No revenue share"];
+
+export function BurnForCompute() {
+  return (
+    <Section id="burn" tone="inset" labelledBy="burn-h">
+      <Head
+        id="burn-h"
+        index="03"
+        eyebrow={`${SITE.ticker} utility`}
+        title={
+          <>
+            Burn for <span className="hl">compute</span>.
+          </>
+        }
+        lede={`The token has one job: paying for hosted forks. Burn ${SITE.ticker}, get USD credit at the price when the burn lands, and spend it on ${SITE.name}'s own GPU coding model. Self-hosting stays free.`}
+      />
+
+      <Reveal className={s.flowWrap}>
+        <BurnFlow />
+      </Reveal>
+
+      <div className={s.burnGrid}>
+        <div>
+          <ol className={s.burnSteps}>
+            {BURN_STEPS.map((b, i) => (
+              <li key={b.t} className={s.burnStep}>
+                <span className={s.burnN} aria-hidden="true">
+                  {i + 1}
+                </span>
+                <div>
+                  <h3 className={s.burnT}>{b.t}</h3>
+                  <p className={s.burnD}>{b.d}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <div className={s.nope}>
+            <p className={s.nopeLead}>Credit is used up, not held.</p>
+            <ul className={s.nopeList}>
+              {NOPE.map((n) => (
+                <li key={n}>
+                  <span aria-hidden="true">✕</span>
+                  {n}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <CrtPanel
+          className={s.statusPanel}
+          title="forkbomb status --launch"
+          status={
+            <Badge tone="signal" pulse>
+              {STATUS.tokenLive ? "live" : "pre-launch"}
+            </Badge>
+          }
+        >
+          <dl className={s.statusRows}>
+            <div className={s.statusRow}>
+              <dt>coin</dt>
+              <dd>
+                <CAChip />
+              </dd>
+            </div>
+            <div className={s.statusRow}>
+              <dt>hosted pool</dt>
+              <dd>
+                <Badge
+                  tone={STATUS.hostedPoolLive ? "ok" : "warn"}
+                  dot={!STATUS.hostedPoolLive}
+                  pulse={STATUS.hostedPoolLive}
+                >
+                  {POOL_STATUS}
+                </Badge>
+              </dd>
+            </div>
+            <div className={s.statusRow}>
+              <dt>self-host</dt>
+              <dd className={s.statusText}>free · {SITE.license} · no token needed</dd>
+            </div>
+            <div className={s.statusRow}>
+              <dt>app</dt>
+              <dd className={s.statusText}>
+                {STATUS.appLive ? (STATUS.tokenLive ? "open" : "open · burns at launch") : "opens at launch"}
+              </dd>
+            </div>
+          </dl>
+          <LedgerPeek live={STATUS.tokenLive} />
+          <div className={cx("cluster", s.statusActions)}>
+            <Button href="/token" variant="primary" iconRight="arrowRight">
+              How the token works
+            </Button>
+            <Button href="/burns" variant="outline" icon="flame">
+              Burn ledger
+            </Button>
+          </div>
+        </CrtPanel>
+      </div>
+    </Section>
+  );
+}
+
+/* ================================================================== */
+/* 04 Benchmark                                                        */
+/* ================================================================== */
+function Meter({
   title,
   rows,
 }: {
   title: string;
-  rows: { label: string; value: string; pct: number; strong?: boolean }[];
+  rows: { label: string; value: string; pct: number; win?: boolean }[];
 }) {
   return (
-    <div className={s.barGroup}>
-      <h3 className={s.barTitle}>{title}</h3>
-      <ul className={s.barList}>
+    <div className={s.meter}>
+      <h3 className={s.meterTitle}>{title}</h3>
+      <ul className={s.meterList}>
         {rows.map((r) => (
-          <li key={r.label} className={s.barRow}>
-            <span className={s.barLabel}>{r.label}</span>
-            <span className={s.barValue}>{r.value}</span>
-            <span className={s.barTrack} aria-hidden="true">
+          <li key={r.label} className={s.meterRow}>
+            <span className={s.meterLabel}>{r.label}</span>
+            <span className={cx(s.meterValue, r.win && s.meterValueWin)}>{r.value}</span>
+            <span className={s.meterTrack} aria-hidden="true">
               <span
-                className={cx(s.barFill, r.strong ? s.barFillStrong : s.barFillMuted)}
+                className={cx(s.meterFill, r.win ? s.meterFillWin : s.meterFillLose)}
                 style={{ ["--pct" as string]: `${r.pct}%` }}
               />
             </span>
@@ -286,253 +540,160 @@ export function Benchmark() {
   const p = BENCH.copy;
   return (
     <Section id="benchmark" labelledBy="bench-h">
-      <div className={cx("split split--top", s.benchSplit)}>
-        <div>
-          <SectionHeader
+      <div className={s.benchGrid}>
+        <div className={s.benchCopy}>
+          <Head
             id="bench-h"
-            index="03"
-          eyebrow="Benchmark"
-            title="A head costs metadata, not a copy."
-            lede="On APFS, clonefile shares every data block with the parent until a head writes. forkbomb bench forks the same workspace both ways and measures it."
+            index="04"
+            eyebrow="Benchmark"
+            title="A fork costs metadata, not a copy."
+            lede="On APFS, clonefile shares every data block with pid 1 until a fork writes. The bench command forks the same tree both ways and measures it."
           />
-          <StatGrid cols={2}>
-            <Stat value={BENCH.speedup} label="faster to fork a head" note={`${c.perHeadMs} ms vs ${nf(p.perHeadMs)} ms`} />
-            <Stat value={BENCH.diskSaving} label="less extra disk" note={`${c.extraDisk} vs ${p.extraDisk}`} />
-          </StatGrid>
-          <CodeBlock
-            className="mt-6"
-            lang="sh"
-            title="Measure your own repo"
-            code="$ node dist/cli.js bench ./my-repo --heads 16"
-          />
+          <div className={s.bigNums}>
+            <div className={s.bigNum}>
+              <span className={s.bigNumV}>{BENCH.speedup}</span>
+              <span className={s.bigNumK}>faster to fork</span>
+              <span className={s.bigNumN}>
+                {c.perHeadMs} ms vs {nf(p.perHeadMs)} ms
+              </span>
+            </div>
+            <div className={s.bigNum}>
+              <span className={s.bigNumV}>{BENCH.diskSaving}</span>
+              <span className={s.bigNumK}>less extra disk</span>
+              <span className={s.bigNumN}>
+                {c.extraDisk} vs {p.extraDisk}
+              </span>
+            </div>
+          </div>
         </div>
 
-        <figure className={s.benchCard}>
-          <BarGroup
-            title="Time to fork one head"
+        <CrtPanel className={s.benchPanel} title={`node dist/cli.js bench ./tree --forks ${BENCH.heads}`}>
+          <Meter
+            title="Time to fork one copy"
             rows={[
-              { label: "apfs-clonefile", value: `${c.perHeadMs} ms`, pct: (c.perHeadMs / p.perHeadMs) * 100, strong: true },
+              {
+                label: "apfs-clonefile",
+                value: `${c.perHeadMs} ms`,
+                pct: (c.perHeadMs / p.perHeadMs) * 100,
+                win: true,
+              },
               { label: "plain copy", value: `${nf(p.perHeadMs)} ms`, pct: 100 },
             ]}
           />
-          <BarGroup
-            title={`Extra disk for ${BENCH.heads} heads`}
+          <Meter
+            title={`Extra disk for ${BENCH.heads} forks`}
             rows={[
-              { label: "apfs-clonefile", value: c.extraDisk, pct: (c.extraDiskMB / p.extraDiskMB) * 100, strong: true },
+              {
+                label: "apfs-clonefile",
+                value: c.extraDisk,
+                pct: (c.extraDiskMB / p.extraDiskMB) * 100,
+                win: true,
+              },
               { label: "plain copy", value: p.extraDisk, pct: 100 },
             ]}
           />
-          <figcaption className={s.benchNote}>
-            forkbomb bench · {BENCH.machine} · {BENCH.workload} · {BENCH.heads} heads. Extra disk is measured from free
-            space before and after, so other activity on the machine shows up as noise.
-          </figcaption>
-        </figure>
-      </div>
-    </Section>
-  );
-}
-
-/* ================================================================== */
-/* 04 Judge                                                            */
-/* ================================================================== */
-const TONE: Record<string, CodeLine["tone"]> = { fl: "meta", hnk: "hunk", add: "add", del: "del" };
-const DIFF_LINES: CodeLine[] = (diffRows as [string, string][]).map(([t, text]) => ({ text, tone: TONE[t] ?? "" }));
-
-export function Judge() {
-  const pipeline = [
-    "Take the head's diff against the base snapshot.",
-    "Drop every change to tests and test config.",
-    "Apply what is left to a fresh clone of the body.",
-    "Run your test command there, under Forkbomb's own Seatbelt profile.",
-    "If tests went missing, it is not a pass.",
-  ];
-  return (
-    <Section id="judge" tone="inset" labelledBy="judge-h">
-      <div className="split split--top split--wide-right">
-        <div>
-          <SectionHeader
-            id="judge-h"
-            className={s.headerTight}
-            index="04"
-          eyebrow="Judge"
-            title="Judged by the patch it would ship."
-            lede="A head's workspace is not trusted. Only its patch is, and only after it passes on a clean copy."
-          />
-          <ol className={s.pipeline}>
-            {pipeline.map((p, i) => (
-              <li key={p}>
-                <span className={s.pipeN} aria-hidden="true">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <span>{p}</span>
-              </li>
-            ))}
-          </ol>
-          <p className={s.fine}>
-            Edits to ignored files like <code>node_modules</code> or build output never reach the judge. The judge is
-            designed against the common ways to game a suite and is still being hardened. Read the patch before you
-            merge it.
+          <p className={s.benchNote}>
+            {BENCH.machine} · {BENCH.workload} · {BENCH.heads} forks. Extra disk is free space before vs after, so other
+            activity on the machine shows up as noise.
           </p>
-        </div>
-
-        <Reveal className={s.judgePanel}>
-          <div className={s.judgeBar}>
-            <span className={s.judgeWho}>
-              <span className={s.judgeLabel}>judge</span>
-              head {RUN.winner.id} · {RUN.winner.strategy}
-            </span>
-            <Badge tone="accent" dot>
-              {RUN.winner.passed}/{RUN.winner.total} passing
-            </Badge>
-          </div>
-          <ol className={s.judgeTrace} aria-label="What the judge ran">
-            <li>patch applied to fresh clone</li>
-            <li>test edits dropped</li>
-            <li>
-              <code>{RUN.testCmd}</code>
-            </li>
-          </ol>
-          <CodeBlock
-            title="calc.js · excerpt of the winning patch"
-            lang="diff"
-            lines={DIFF_LINES}
-            maxHeight={520}
-            ariaLabel="Excerpt of the winning patch"
-            more={{
-              href: REPLAY_URL,
-              label: "Full patch in the replay",
-              note: `${RUN.patch.lines} lines · ${RUN.patch.files} file`,
-            }}
-          />
-        </Reveal>
+        </CrtPanel>
       </div>
     </Section>
   );
 }
 
 /* ================================================================== */
-/* 05 Isolation                                                        */
+/* 05 Engines                                                          */
 /* ================================================================== */
-const POLICY: { what: string; rule: ReactNode; tag: string }[] = [
-  { what: "Writes", rule: <>Only the head&apos;s own clone and temp dir. <code>.git</code> is read-only.</>, tag: "confined" },
-  { what: "Credentials", rule: <><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.config/gh</code>, Keychains are unreadable.</>, tag: "deny" },
-  { what: "Network", rule: <>Loopback only. <code>--network</code> opts in, API engine only.</>, tag: "deny" },
-  { what: "Environment", rule: "Clean. No API keys or tokens in a head's shell.", tag: "stripped" },
-];
+type EngineCard = {
+  id: string;
+  name: string;
+  flag: string;
+  tag?: { text: string; tone?: "warn" | "neutral" };
+  rows: [string, ReactNode][];
+  note: ReactNode;
+  hot?: boolean;
+};
 
-export function Isolation() {
-  return (
-    <Section id="isolation" labelledBy="iso-h">
-      <div className="split split--top">
-        <SectionHeader
-          id="iso-h"
-          className={s.headerFlush}
-          index="05"
-          eyebrow="Isolation"
-          title="Every head runs in a box."
-          lede="Each shell command a head runs goes through macOS Seatbelt. Claude Code heads also run in Claude Code's own sandbox, in safe mode, with no user or project settings."
-          actions={
-            <Button href="/security" iconRight="arrowRight">
-              Read the security model
-            </Button>
-          }
-        />
-
-        <div className="stack">
-          <div className={s.policy}>
-            <p className={s.policyHead} aria-hidden="true">
-              <span>Resource</span>
-              <span>Rule for every head</span>
-            </p>
-            <ul className={s.policyList} aria-label="Head sandbox policy">
-              {POLICY.map((p) => (
-                <li key={p.what} className={s.policyRow}>
-                  <span className={s.policyWhat}>
-                    <Icon name={p.what === "Credentials" ? "lock" : "shield"} size={14} />
-                    {p.what}
-                  </span>
-                  <span className={s.policyRule}>
-                    <span>{p.rule}</span>
-                    <span className={s.policyTag}>{p.tag}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <div className={s.policyCanary}>
-              <code>
-                <span className="accent" aria-hidden="true">
-                  ${" "}
-                </span>
-                forkbomb canary
-              </code>
-              <span>Runs a real session told to escape. Claude Code heads only start if every escape fails.</span>
-            </div>
-          </div>
-          <Callout tone="warn" title="Limits, stated plainly">
-            <p>
-              Seatbelt is a macOS sandbox, not a VM. Heads can still read most of your filesystem outside the credential
-              folders, and use CPU and memory freely. Run Forkbomb on code you would let an agent work on.
-            </p>
-          </Callout>
-        </div>
-      </div>
-    </Section>
-  );
-}
-
-/* ================================================================== */
-/* 06 Engines                                                          */
-/* ================================================================== */
-type EngineRow = [string, ReactNode];
-const ENGINES: { flag: string; name: string; tag?: string; rows: EngineRow[]; note?: string }[] = [
+const ENGINE_CARDS: EngineCard[] = [
   {
-    flag: "--engine claude-code",
+    id: "claude-code",
     name: "Your Claude plan",
-    tag: "default",
+    flag: "--engine claude-code",
+    tag: { text: "default" },
     rows: [
-      ["Pays with", "Your Claude Pro or Max plan. No API credits."],
-      ["Setup", <><code>claude auth login</code>, once.</>],
-      ["Each head", "A headless Claude Code session in safe mode: no CLAUDE.md, hooks, plugins or MCP."],
-      ["Sandbox", "Claude Code's Bash sandbox, deny rules on credential folders and .git, plus the isolation canary."],
-      ["Model", <>Your Claude Code default, or <code>--model</code>.</>],
+      ["Pays with", "Your Claude Pro or Max plan"],
+      ["Each fork", "A headless Claude Code session in safe mode: no CLAUDE.md, hooks, plugins or MCP"],
+      [
+        "Setup",
+        <>
+          <code>claude auth login</code>, once
+        </>,
+      ],
     ],
-    note: "Heads count against your plan's usage limits. Eight heads use them about eight times as fast as one session.",
+    note: "Forks count against your plan's limits: 8 forks use them about 8× as fast as one session.",
   },
   {
+    id: "api",
+    name: "Your API key",
     flag: "--engine api",
-    name: "An Anthropic API key",
     rows: [
-      ["Pays with", "Pay as you go on the Messages API."],
-      ["Setup", <><code>ANTHROPIC_API_KEY</code> in <code>~/.forkbomb/.env</code>, or exported.</>],
-      ["Each head", "Forkbomb's own tool loop with two tools: bash and a text editor."],
-      ["Sandbox", "Forkbomb's Seatbelt profile for every shell command. The editor re-checks every path."],
-      ["Model", <><code>claude-opus-5-5</code> at medium effort, or <code>--model</code>.</>],
+      ["Pays with", "Pay as you go on the Anthropic API"],
+      ["Each fork", "Forkbomb's own tool loop with two tools: bash and a text editor"],
+      [
+        "Setup",
+        <>
+          <code>ANTHROPIC_API_KEY</code> in your environment
+        </>,
+      ],
     ],
-    note: "The key stays in Forkbomb's own process. Head shells get a clean environment without it.",
+    note: "The key stays in Forkbomb's own process. Fork shells get a clean environment without it.",
+  },
+  {
+    id: "hosted",
+    name: `Burn ${SITE.ticker}`,
+    flag: "--engine hosted",
+    tag: {
+      text: POOL_STATUS,
+      tone: STATUS.hostedPoolLive ? "neutral" : "warn",
+    },
+    hot: true,
+    rows: [
+      ["Pays with", `Credit from burning ${SITE.ticker}`],
+      ["Each fork", "Forkbomb's GPU coding model over an OpenAI-compatible API"],
+      ["Setup", "A workspace API key from the app"],
+    ],
+    note: STATUS.hostedPoolLive
+      ? "The code your forks read is sent to Forkbomb's hosted model."
+      : "The GPU pool isn't provisioned yet. Until it is, run on your Claude plan or an API key.",
   },
 ];
 
 export function Engines() {
   return (
     <Section id="engines" labelledBy="eng-h" divider>
-      <SectionHeader
+      <Head
         id="eng-h"
-        index="06"
-          eyebrow="Engines"
-        title="Runs on your Claude plan, or an API key."
-        lede="Pick the engine per run. Either way, credentials stay on your machine and the judge runs under Forkbomb's own sandbox."
+        index="05"
+        eyebrow="Engines"
+        title="Bring a plan, a key, or burn the coin."
+        lede="Pick the engine per race. The judge always runs on your machine, under Forkbomb's own sandbox."
       />
       <div className={s.engines}>
-        {ENGINES.map((e) => (
-          <article key={e.flag} className={s.engine} aria-labelledby={`eng-${e.flag.split(" ")[1]}`}>
+        {ENGINE_CARDS.map((e) => (
+          <article key={e.id} className={cx(s.engine, e.hot && s.engineHot)} aria-labelledby={`eng-${e.id}`}>
             <header className={s.engineHead}>
-              <div>
-                <h3 id={`eng-${e.flag.split(" ")[1]}`} className={s.engineName}>
+              <div className={s.engineHeadText}>
+                <h3 id={`eng-${e.id}`} className={s.engineName}>
                   {e.name}
                 </h3>
                 <code className={s.engineFlag}>{e.flag}</code>
               </div>
-              {e.tag && <Badge>{e.tag}</Badge>}
+              {e.tag && (
+                <Badge tone={e.tag.tone ?? "neutral"} dot={e.tag.tone === "warn"}>
+                  {e.tag.text}
+                </Badge>
+              )}
             </header>
             <dl className={s.engineRows}>
               {e.rows.map(([k, v]) => (
@@ -542,70 +703,98 @@ export function Engines() {
                 </div>
               ))}
             </dl>
-            {e.note && <p className={s.engineNote}>{e.note}</p>}
+            <p className={s.engineNote}>{e.note}</p>
           </article>
         ))}
       </div>
+      <p className={s.fine}>
+        Forkbomb is an independent open-source project. Not affiliated with Anthropic. Claude and Claude Code are
+        Anthropic&apos;s products; you use them under your own account.
+      </p>
     </Section>
   );
 }
 
 /* ================================================================== */
-/* 07 Quickstart                                                       */
+/* 06 Isolation teaser                                                 */
 /* ================================================================== */
-export function Quickstart() {
+const POLICY: { what: string; icon: IconName; rule: ReactNode; tag: string }[] = [
+  {
+    what: "Writes",
+    icon: "shield",
+    rule: (
+      <>
+        Only the fork&apos;s own clone and temp dir. <code>.git</code> is read-only.
+      </>
+    ),
+    tag: "confined",
+  },
+  {
+    what: "Credentials",
+    icon: "lock",
+    rule: (
+      <>
+        <code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.config/gh</code> and Keychains are unreadable.
+      </>
+    ),
+    tag: "deny",
+  },
+  {
+    what: "Network",
+    icon: "shield",
+    rule: (
+      <>
+        Loopback only. <code>--network</code> opts in.
+      </>
+    ),
+    tag: "deny",
+  },
+  {
+    what: "Environment",
+    icon: "key",
+    rule: "Clean. No API keys or tokens in a fork's shell.",
+    tag: "stripped",
+  },
+];
+
+export function Isolation() {
   return (
-    <Section id="quickstart" tone="inset" labelledBy="qs-h">
-      <div className="split split--top">
-        <div>
-          <SectionHeader
-            id="qs-h"
-            className={s.headerTight}
-            index="07"
-          eyebrow="Quickstart"
-            title="Three commands to your first run."
-            lede="Forkbomb is not on npm yet. Build it from source."
-          />
-          <ol className={s.qsSteps}>
-            {INSTALL.map((st, i) => (
-              <li key={st.label} className={s.qsStep}>
-                <CodeBlock lang="sh" title={`${i + 1}  ${st.label}`} code={st.lines.join("\n")} ariaLabel={st.label} />
-              </li>
-            ))}
-          </ol>
-          <div className="cluster mt-8">
-            <Button href="/docs#install" iconRight="arrowRight">
-              Full install guide
+    <Section id="isolation" tone="inset" labelledBy="iso-h">
+      <div className={s.isoGrid}>
+        <Head
+          id="iso-h"
+          index="06"
+          eyebrow="Isolation"
+          title="Every fork runs in a box."
+          lede="Each shell command a fork runs goes through macOS Seatbelt. It's a bomb, but a contained one."
+        >
+          <div className={cx("cluster", s.headActions)}>
+            <Button href="/security" variant="outline" iconRight="arrowRight">
+              Read the security model
             </Button>
           </div>
-        </div>
+        </Head>
 
-        <div className={s.qsTerm}>
-          <Terminal
-            title={`recorded output · run ${RUN.id}`}
-            status={
-              <Badge tone="accent" dot>
-                {RUN.winner.passed}/{RUN.winner.total}
-              </Badge>
-            }
-            lines={RUN_TRANSCRIPT}
-            animate
-            ariaLabel="Terminal output from the recorded run"
-          />
-          <p className={s.fine}>
-            Output from the recorded run, trimmed. Examples write <code>forkbomb</code> for <code>node dist/cli.js</code>.
+        <div className={s.policy}>
+          <ul className={s.policyList} aria-label="Sandbox policy for every fork">
+            {POLICY.map((p) => (
+              <li key={p.what} className={s.policyRow}>
+                <span className={s.policyWhat}>
+                  <Icon name={p.icon} size={14} />
+                  {p.what}
+                </span>
+                <span className={s.policyRule}>{p.rule}</span>
+                <span className={s.policyTag}>{p.tag}</span>
+              </li>
+            ))}
+          </ul>
+          <p className={s.policyLimit}>
+            <Icon name="warn" size={14} />
+            <span>
+              Seatbelt is a macOS sandbox, not a VM. Forks can still read most of your filesystem outside the credential
+              folders. Run it on code you&apos;d let an agent work on.
+            </span>
           </p>
-          <div className={s.reqs}>
-            <h3 className={s.reqsTitle}>Requirements</h3>
-            <ul>
-              {REQUIREMENTS.map((r) => (
-                <li key={r}>
-                  <Icon name="check" size={14} />
-                  {r}
-                </li>
-              ))}
-            </ul>
-          </div>
         </div>
       </div>
     </Section>
@@ -613,9 +802,38 @@ export function Quickstart() {
 }
 
 /* ================================================================== */
-/* 08 FAQ                                                              */
+/* 07 FAQ                                                              */
 /* ================================================================== */
 const FAQ: { q: string; a: ReactNode }[] = [
+  {
+    q: `What does ${SITE.ticker} do?`,
+    a: (
+      <>
+        It pays for hosted compute. Burn it with the memo <code>{MEMO}</code>, and your workspace gets USD credit at the
+        token&apos;s time-weighted price when the burn lands. The credit runs forks on {SITE.name}&apos;s own GPU coding
+        model through <code>--engine hosted</code>. Every burn and the credit it produced is listed on the public burn
+        ledger.
+      </>
+    ),
+  },
+  {
+    q: "Do I need the token?",
+    a: `No. ${SITE.name} is ${SITE.license} licensed and self-hosting is free: run it on your Claude plan or your own API key and never touch the coin. The token buys hosted convenience and scale, not permission.`,
+  },
+  {
+    q: "Is the hosted pool live?",
+    a: STATUS.hostedPoolLive
+      ? "Yes. Hosted forks run on the GPU pool and draw down your workspace credit."
+      : "Not yet. The GPU pool is coming online and the coin hasn't launched. The claude-code and api engines work today, with no token involved.",
+  },
+  {
+    q: "Can I get my credit back or sell it?",
+    a: "No. Credit is consumptive: no refunds, no transfers, no buybacks, no yield, no revenue share. Burn only what you plan to spend on compute.",
+  },
+  {
+    q: "Is it Mac only?",
+    a: "Yes, for now. Forking uses APFS clonefile and the sandbox uses Seatbelt, both macOS. Other platforms would need their own fork and sandbox backends. None ship today.",
+  },
   {
     q: "Is it on npm?",
     a: (
@@ -626,28 +844,12 @@ const FAQ: { q: string; a: ReactNode }[] = [
     ),
   },
   {
-    q: "Is it Mac only?",
-    a: "Yes, for now. Forking uses APFS clonefile and the sandbox uses Seatbelt, both macOS. Other platforms would need their own fork and sandbox backends. None ship today.",
-  },
-  {
-    q: "Do I need the $FORKBOMB token?",
-    a: "No. The token is a community launch vehicle and is not wired into the product. Forkbomb is MIT licensed and runs without it.",
-  },
-  {
-    q: "What does a run cost?",
-    a: "Forkbomb itself is free. On the Claude Code engine, heads use your plan's usage limits, and N heads use them about N times as fast. On the API engine you pay for tokens as usual.",
-  },
-  {
-    q: "Can a head cheat the tests?",
-    a: "The judge drops test and test-config edits, applies the patch to a fresh clone, and does not count runs where tests went missing. It is designed against common gaming and is still being hardened. Review the winning patch like any other change.",
+    q: "Can a fork cheat the tests?",
+    a: "The judge drops test and test-config edits, applies the patch to a fresh clone, and doesn't count runs where tests went missing. It's designed against common gaming and still being hardened. Review the winning patch like any other change.",
   },
   {
     q: "Does my code leave my machine?",
-    a: "Forkbomb has no telemetry and no server of its own. The heads are Claude sessions, so the code they read goes to Anthropic's API, as it would in any Claude Code session. Heads get no network beyond loopback and no credentials.",
-  },
-  {
-    q: "How mature is it?",
-    a: `Early. Pre-release, macOS only, not on npm. Forkbomb's own suite has ${TEST_COUNT} automated tests, and every run is saved with its full event log so you can replay exactly what happened.`,
+    a: `${SITE.name} has no telemetry. On the claude-code and api engines, the code your forks read goes to Anthropic's API, as in any Claude Code session. On the hosted engine it goes to ${SITE.name}'s hosted model. The judge always runs locally.`,
   },
 ];
 
@@ -655,15 +857,14 @@ export function Faq() {
   return (
     <Section id="faq" labelledBy="faq-h">
       <div className={s.faqGrid}>
-        <SectionHeader
+        <Head
           id="faq-h"
-          className={s.headerFlush}
-          index="08"
+          index="07"
           eyebrow="FAQ"
-          title="Straight answers."
+          title="man forkbomb"
           lede={
             <>
-              Something missing?{" "}
+              Straight answers. Something missing?{" "}
               <a className="link" href={ISSUES_URL} target="_blank" rel="noopener noreferrer">
                 Open an issue
               </a>
@@ -690,29 +891,46 @@ export function Faq() {
 }
 
 /* ================================================================== */
-/* Final CTA                                                           */
+/* Final CTA band                                                      */
 /* ================================================================== */
+const CTA_MARQUEE: MarqueeItem[] = [SITE.glyph, "fork()", "kill -9", "exit 0", SITE.ticker];
+
 export function FinalCta() {
   return (
-    <Section size="sm" labelledBy="cta-h">
-      <div className={s.cta}>
-        <Mark className={s.ctaMark} size={36} />
-        <h2 id="cta-h" className={cx("h1", s.ctaTitle)}>
-          Stop betting on one attempt.
-        </h2>
-        <p className={cx("lede", s.ctaLede)}>
-          Point Forkbomb at a failing suite. Watch {RUN.heads.length} strategies race. Keep the patch that passes.
-        </p>
-        <div className={cx("cluster", s.ctaActions)}>
-          <Button href="/docs" variant="primary" size="lg" iconRight="arrowRight">
-            Read the docs
-          </Button>
-          <Button href={GITHUB_URL} size="lg" icon="github">
-            View the source
-          </Button>
+    <section className={s.final} aria-labelledby="cta-h">
+      <Marquee items={CTA_MARQUEE} tone="signal" size="lg" speed={34} />
+      <div className={cx("container", s.finalInner)}>
+        <span className={s.finalGlyph} aria-hidden="true" translate="no">
+          {SITE.glyph}
+        </span>
+        <div className={s.finalCopy}>
+          <PixelHeading as="h2" size="display" id="cta-h">
+            Light the <span className="hl">fuse</span>.
+          </PixelHeading>
+          <p className={cx("lede", s.finalLede)}>
+            Point {SITE.wordmark} at a failing suite. Watch the forks race. Keep the patch that exits 0.
+          </p>
+          <div className={cx("cluster", s.finalCtas)}>
+            <Button href={APP_URL} variant="primary" size="lg" iconRight="arrowRight">
+              Open app
+            </Button>
+            <Button href="/docs#install" variant="outline" size="lg">
+              Install from source
+            </Button>
+            <Button href={GITHUB_URL} variant="ghost" size="lg" icon="github">
+              Source
+            </Button>
+          </div>
+          <p className={s.finalMeta}>{SITE.license} · macOS only · not on npm yet · not affiliated with Anthropic</p>
         </div>
-        <p className={s.ctaMeta}>MIT · macOS · install from source</p>
+        <CodeBlock
+          className={s.finalCode}
+          title="Install from source"
+          lang="sh"
+          code={INSTALL_SCRIPT}
+          ariaLabel="Install commands"
+        />
       </div>
-    </Section>
+    </section>
   );
 }

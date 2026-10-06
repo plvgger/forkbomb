@@ -10,6 +10,7 @@
 
   // Embed mode (?embed=1): no chrome, tree scales to fit the frame and stays centered.
   // In a tall frame the tree switches to a vertical (top-down) layout so it stays legible.
+  // The standalone page does the same on narrow (phone) viewports, where the horizontal tree runs off-screen.
   const EMBED = !!window.__EMBED;
   const PAD = EMBED ? 16 : 28;
   const V_INDENT = 36;
@@ -17,7 +18,8 @@
   const MAX_SCALE = 1.4;
   const layoutParam = new URLSearchParams(location.search).get("layout");
   const wantVertical = () =>
-    EMBED && (layoutParam === "vertical" || (layoutParam !== "horizontal" && window.innerHeight > window.innerWidth * 1.05));
+    layoutParam === "vertical" ||
+    (layoutParam !== "horizontal" && (EMBED ? window.innerHeight > window.innerWidth * 1.05 : window.innerWidth < 700));
   let vertical = wantVertical();
   let natural = { W: 0, H: 0 };
 
@@ -88,7 +90,7 @@
     const el = document.createElement("div");
     el.className = `card ${opts.body ? "body" : "running"}`;
     el.innerHTML = `
-      <div class="row"><span class="id">${esc(opts.body ? "BODY" : id)}</span><span class="strat"></span><span class="chip">${opts.body ? "SOURCE" : "FORKED"}</span></div>
+      <div class="row"><span class="id">${esc(opts.body ? "PID 1" : id)}</span><span class="strat"></span><span class="chip">${opts.body ? "PARENT" : "FORKED"}</span></div>
       <div class="tick"></div>
       <div class="foot"><span class="turns"></span><span class="bar"><i></i></span><span class="score"></span></div>`;
     el.style.animationDelay = `${(opts.stagger || 0) * 35}ms`;
@@ -210,14 +212,14 @@
     if (instant) requestAnimationFrame(() => root.removeAttribute("data-fit-instant"));
   }
 
-  if (EMBED) {
+  {
     let raf = 0;
     window.addEventListener("resize", () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const v = wantVertical();
         if (v !== vertical) { vertical = v; layout(); fit(true); }
-        else fit(true);
+        else fit(true); // no-op outside embed mode
       });
     });
   }
@@ -231,7 +233,7 @@
 
   function sever(n) {
     setState(n, "severed");
-    setChip(n, "SEVERED");
+    setChip(n, "KILLED");
     if (n.wire && !n.cut) {
       n.cut = document.createElementNS(SVG, "path");
       n.cut.setAttribute("class", "cut");
@@ -273,19 +275,20 @@
         S.subscription = e.engine === "claude-code";
         if (S.subscription) {
           $("cost").textContent = "subscription";
-          $("cost").title = "Heads run through Claude Code on your Claude plan, so there's no per-token bill.";
+          $("cost").title = "Forks run through Claude Code on your Claude plan, so there's no per-token bill.";
         }
         $("tSandbox").textContent = e.sandbox ? "Seatbelt" : "off";
         $("tSandboxS").textContent = e.sandbox ? (e.network ? "writes confined · network on" : "writes confined · network off") : "no sandbox";
         const b = makeNode("body", 0, null, { body: true });
-        q(b, ".strat").textContent = e.repo.split("/").slice(-2).join("/");
-        setTick(b, "the original repository");
+        // Show the repo folder name only, not the recorded absolute path.
+        q(b, ".strat").textContent = e.repo.split("/").filter(Boolean).pop() || e.repo;
+        setTick(b, "the original repo copy");
         layout();
         // Tell the host page (same origin) that the embed has drawn, so it can swap out its static poster.
         if (EMBED && window.parent !== window) {
           try { window.parent.postMessage({ type: "forkbomb:replay-ready" }, location.origin); } catch (_) {}
         }
-        log(e.t, "", `run ${e.runId}: ${e.heads} heads × ${e.rounds} round${e.rounds > 1 ? "s" : ""}`);
+        log(e.t, "", `run ${e.runId}: ${e.heads} forks × ${e.rounds} round${e.rounds > 1 ? "s" : ""}`);
         break;
       }
       case "baseline": {
@@ -296,7 +299,7 @@
           q(b, ".bar i").style.width = `${(100 * e.passed) / total}%`;
           q(b, ".score").textContent = `${e.passed}/${total}`;
         }
-        log(e.t, "body", total != null ? `baseline: ${e.passed} passing, ${e.failed} failing` : `baseline exit ${e.exitCode}`, "warn");
+        log(e.t, "pid 1", total != null ? `baseline: ${e.passed} passing, ${e.failed} failing` : `baseline exit ${e.exitCode}`, "warn");
         break;
       }
       case "fork": {
@@ -305,12 +308,12 @@
         const avg = e.msEach.reduce((a, b) => a + b, 0) / Math.max(1, e.msEach.length);
         $("tFork").textContent = fmtMs(avg);
         $("tFork").classList.add("hot");
-        $("tForkS").textContent = `per head · ${e.heads.length} heads · ${e.forker}`;
+        $("tForkS").textContent = `per fork · ${e.heads.length} forks · ${e.forker}`;
         $("tLogical").textContent = fmtBytes(e.logicalBytes);
         $("tLogicalS").textContent = `${e.heads.length} × ${fmtBytes(e.workspaceBytes)}`;
         $("tPhysical").textContent = fmtBytes(e.physicalBytes);
         $("tPhysical").classList.add("hot");
-        log(e.t, e.parent, `forked ${e.heads.length} heads in ${fmtMs(avg)} each`, "good");
+        log(e.t, e.parent === "body" ? "pid 1" : e.parent, `fork() × ${e.heads.length} in ${fmtMs(avg)} each`, "hot");
         const twrap = $("treeWrap");
         // Follow new rounds, but on narrow screens keep the body node in view.
         if (twrap.clientWidth >= 760) twrap.scrollTo({ left: twrap.scrollWidth, behavior: "smooth" });
@@ -369,7 +372,7 @@
         if (!n) break;
         sever(n);
         setTick(n, e.why, true);
-        log(e.t, e.head, `severed: ${e.why}`, "bad");
+        log(e.t, e.head, `SIGKILL: ${e.why}`, "bad");
         break;
       case "round_end": {
         const best = e.best && S.nodes.get(e.best);
@@ -381,7 +384,7 @@
         if (!n) break;
         S.winner = e.head;
         setState(n, "won");
-        setChip(n, "SURVIVOR");
+        setChip(n, "EXIT 0");
         for (const other of S.nodes.values()) {
           if (other.id !== e.head && other.status === "running") sever(other);
         }
@@ -389,14 +392,14 @@
         $("winnerId").textContent = `${e.head} · ${e.diffLines} lines`;
         $("winnerSummary").textContent = e.summary || "";
         $("diff").innerHTML = renderDiff(e.patch);
-        log(e.t, e.head, `survives · ${e.diffLines} lines in ${e.filesChanged} file${e.filesChanged === 1 ? "" : "s"}`, "good");
+        log(e.t, e.head, `exit 0 · ${e.diffLines} lines in ${e.filesChanged} file${e.filesChanged === 1 ? "" : "s"}`, "good");
         break;
       }
       case "run_end":
         S.running = false;
         $("elapsed").textContent = fmtT(e.ms);
         if (e.costUsd != null && !S.subscription) $("cost").textContent = `$${e.costUsd.toFixed(2)}`;
-        setStatus(e.ok ? "SURVIVOR FOUND" : "NO SURVIVOR", e.ok ? "won" : "lost");
+        setStatus(e.ok ? "EXIT 0" : "NO EXIT 0", e.ok ? "won" : "lost");
         log(e.t, "", `done in ${fmtT(e.ms)}${e.costUsd != null ? ` · $${e.costUsd.toFixed(2)}` : ""}${e.applied ? " · patch applied" : ""}`, e.ok ? "good" : "bad");
         break;
       case "log":

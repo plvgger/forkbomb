@@ -12,36 +12,7 @@
   }
 }
 
-.panel {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background:
-    linear-gradient(var(--border) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(90deg, var(--border) 1px, transparent 1px) 0 0 / 24px 24px,
-    var(--bg-raised);
-  background-blend-mode: normal;
-  padding: var(--space-8) var(--space-6) var(--space-6);
-  display: flex;
-  justify-content: center;
-  position: relative;
-  overflow: hidden;
-}
 
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse at center, transparent 30%, var(--bg-raised) 85%);
-  pointer-events: none;
-}
-
-.tree {
-  position: relative;
-  width: 100%;
-  max-width: 360px;
-  height: auto;
-  display: block;
-}
 
 .routes {
   margin-top: var(--space-16);

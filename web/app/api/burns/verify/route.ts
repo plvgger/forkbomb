@@ -1,0 +1,17 @@
+import { verifyBurn } from "@/lib/server/burns";
+import { ApiError, clientIp, handler, json, readJsonObject } from "@/lib/server/http";
+import { hashIp } from "@/lib/server/keys";
+import { enforce } from "@/lib/server/ratelimit";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+// POST /api/burns/verify {signature} -> {burn}. Idempotent: a replay returns the stored record
+// with status "already_credited". 202 when the burn is held for manual review.
+export const POST = handler(async (req: Request) => {
+  await enforce("verify", hashIp(clientIp(req)));
+  const body = await readJsonObject(req);
+  if (typeof body.signature !== "string") throw new ApiError(400, "invalid_signature", "signature is required.");
+  const burn = await verifyBurn(body.signature);
+  return json({ burn }, { status: burn.status === "review" ? 202 : 200 });
+});

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ApfsForker, CopyForker, type Forker, canClone } from "./fork/forker.js";
-import { fmtBytes, freeBytes, forkbombHome, treeBytes } from "./util.js";
+import { appHome, fmtBytes, freeBytes, treeBytes } from "./util.js";
 
 export interface BenchRow {
   forker: string;
@@ -34,7 +34,7 @@ async function measure(forker: Forker, src: string, heads: number, scratch: stri
 
 /** Fork the same workspace with clonefile and with a plain copy, and report both honestly. */
 export async function bench(src: string, heads: number, withCopy: boolean): Promise<BenchRow[]> {
-  const scratch = join(forkbombHome(), "bench");
+  const scratch = join(appHome(), "bench");
   await mkdir(scratch, { recursive: true });
   const rows: BenchRow[] = [];
   if (await canClone(src, scratch)) rows.push(await measure(await ApfsForker.create(), src, heads, scratch));
@@ -43,7 +43,7 @@ export async function bench(src: string, heads: number, withCopy: boolean): Prom
 }
 
 export function benchTable(rows: BenchRow[]): string {
-  const head = ["forker", "heads", "total", "per head", "logical", "physical"];
+  const head = ["forker", "forks", "total", "per fork", "logical", "physical"];
   const body = rows.map((r) => [
     r.forker,
     String(r.heads),

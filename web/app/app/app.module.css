@@ -1,0 +1,500 @@
+/* ---------- Page ---------- */
+.hero {
+  position: relative;
+  padding-block: clamp(2.5rem, 1.5rem + 4vw, 4.5rem) var(--space-8);
+  background:
+    radial-gradient(ellipse 50% 70% at 80% 30%, rgba(255, 77, 31, 0.09), transparent 70%),
+    var(--bg);
+}
+
+.lede {
+  max-width: 68ch;
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  color: var(--text-2);
+}
+
+.body {
+  padding-block: var(--space-6) var(--section-y-sm);
+}
+
+.fine {
+  margin-top: var(--space-10);
+  max-width: 70ch;
+  font: var(--text-xs) / 1.6 var(--font-mono);
+  color: var(--text-3);
+}
+
+/* ---------- Shared bits ---------- */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+}
+
+@media (min-width: 900px) {
+  .split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.panelTitle {
+  position: relative;
+  z-index: 4;
+  font: 600 var(--text-lg) / 1.25 var(--font-sans);
+  color: var(--text);
+}
+
+.muted {
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.mono {
+  font: 500 var(--text-sm) / 1.4 var(--font-mono);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+a.mono {
+  text-decoration: underline;
+  text-decoration-color: var(--border-hover);
+  text-underline-offset: 3px;
+}
+
+a.mono:hover {
+  text-decoration-color: var(--signal);
+}
+
+.error {
+  font: var(--text-sm) / 1.5 var(--font-sans);
+  color: var(--signal-ink);
+}
+
+/* ---------- Forms ---------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fieldLabel {
+  font: 500 var(--text-2xs) / 1.3 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font: 500 var(--text-sm) / 1.4 var(--font-mono);
+  color: var(--text);
+  transition: border-color var(--dur-2) var(--ease-out);
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--border-hover);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+  border-color: var(--signal-line);
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--signal-line);
+}
+
+.input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.check input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--signal);
+}
+
+.fieldsetForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4) 0 0;
+  border: 0;
+  border-top: 1px dashed var(--border);
+}
+
+.fieldset:disabled {
+  opacity: 0.6;
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-3);
+  font: 600 var(--text-sm) / 1.2 var(--font-mono);
+  color: var(--text);
+}
+
+.stepN {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--signal-line);
+  border-radius: var(--radius-xs);
+  font: 400 var(--text-sm) / 1 var(--font-pixel);
+  color: var(--signal);
+}
+
+/* ---------- Key reveal ---------- */
+.secretList {
+  margin: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.secretList > div {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.secretList dt {
+  font: 500 var(--text-2xs) / 1.3 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* Value, then its Copy button in the same spot on every row: beside it, or under it on phones. */
+.secretList dd {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.secret {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font: 500 var(--text-sm) / 1.4 var(--font-mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* ---------- Key/value list ---------- */
+.kv {
+  position: relative;
+  z-index: 4;
+  margin: 0;
+  display: grid;
+  font: 500 var(--text-sm) / 1.4 var(--font-mono);
+}
+
+.kv > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.kv > div:last-child {
+  border-bottom: 0;
+}
+
+.kv dt {
+  color: var(--text-2);
+}
+
+.kv dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Phones: every row is label over value, values start at the left, Copy stays right after the value. */
+@media (max-width: 599px) {
+  .kv > div {
+    display: grid;
+    justify-content: stretch;
+    gap: var(--space-2);
+  }
+
+  .kv dd {
+    justify-content: flex-start;
+  }
+
+  .kv dd > code {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .secretList dd {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  .secret {
+    width: 100%;
+    font-size: var(--text-xs);
+  }
+}
+
+/* ---------- Stats ---------- */
+.stats {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+@media (max-width: 899px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.statBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-5);
+  background: var(--surface);
+}
+
+.statBox dt {
+  font: 500 var(--text-2xs) / 1.3 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.statValue {
+  margin: 0;
+  min-height: 1.1em;
+  font: 600 clamp(1.25rem, 1rem + 1vw, 1.875rem) / 1.05 var(--font-mono);
+  letter-spacing: -0.03em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.statValue :global(.skeleton) {
+  width: 6ch;
+  height: 0.9em;
+}
+
+.statHot {
+  color: var(--ok);
+}
+
+/* ---------- Dashboard layout ---------- */
+.dashGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+@media (min-width: 1024px) {
+  .dashGrid {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  }
+}
+
+/* ---------- Wallet + burn ---------- */
+.walletList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.walletIcon {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: -3px;
+  border-radius: 4px;
+}
+
+.walletRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.walletName {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.walletName img {
+  border-radius: 4px;
+}
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  font: var(--text-xs) / 1.55 var(--font-mono);
+  color: var(--text-2);
+}
+
+.previewValue {
+  font: 600 var(--text-lg) / 1.2 var(--font-mono);
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+.status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.statusError {
+  border-color: var(--signal-line);
+  background: var(--signal-soft);
+}
+
+.status a:not(.mono) {
+  color: var(--signal-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.details {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.details summary {
+  cursor: pointer;
+  margin-bottom: var(--space-3);
+  font: 500 var(--text-xs) / 1.5 var(--font-mono);
+  color: var(--text-2);
+}
+
+.details summary:hover {
+  color: var(--text);
+}
+
+/* ---------- Usage table ---------- */
+.state {
+  margin: var(--space-4);
+  border-radius: var(--radius-md);
+}
+
+.tableWrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  font: 400 0.8125rem / 1.5 var(--font-mono);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  font: 500 var(--text-2xs) / 1.3 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px dashed var(--border);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table .num {
+  text-align: right;
+}

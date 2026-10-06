@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { GITHUB_URL, NAV, SITE, TOKEN_LINK, type NavLink } from "../config";
+import { GITHUB_URL, NAV, NAV_CTA, SITE, TOKEN_LINK, type NavLink } from "../config";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
@@ -91,14 +91,27 @@ export function SiteNav() {
               <NavAnchor link={l} className="nav-link" pathname={pathname} />
             </li>
           ))}
+          <li>
+            <NavAnchor link={TOKEN_LINK} className="nav-link nav-link--token" pathname={pathname} />
+          </li>
         </ul>
         <div className="site-nav__end">
-          <NavAnchor link={TOKEN_LINK} className="nav-token" pathname={pathname} />
-          <Button href={GITHUB_URL} external size="sm" icon="github" className="btn--gh" aria-label="Forkbomb on GitHub">
-            GitHub
+          <Button
+            href={GITHUB_URL}
+            external
+            size="sm"
+            variant="ghost"
+            icon="github"
+            className="btn--gh"
+            aria-label={`${SITE.name} on GitHub`}
+          >
+            <span className="sr-only">GitHub</span>
           </Button>
-          <Button href="/docs#install" size="sm" variant="primary" className="btn--install">
-            Install
+          <Button href={NAV_CTA.wallet.href} size="sm" variant="outline" icon="wallet" className="btn--wallet">
+            {NAV_CTA.wallet.label}
+          </Button>
+          <Button href={NAV_CTA.app.href} size="sm" variant="primary" className="btn--app">
+            {NAV_CTA.app.label}
           </Button>
           <details className="nav-menu" ref={menu} onToggle={(e) => setOpen(e.currentTarget.open)}>
             <summary aria-label={open ? "Close menu" : "Open menu"}>
@@ -114,11 +127,14 @@ export function SiteNav() {
                 ))}
               </ul>
               <div className="nav-sheet__actions">
-                <Button href="/docs#install" variant="primary" size="lg" block iconRight="arrowRight">
-                  Install from source
+                <Button href={NAV_CTA.app.href} variant="primary" size="lg" block iconRight="arrowRight">
+                  {NAV_CTA.app.label}
                 </Button>
-                <Button href={GITHUB_URL} external size="lg" icon="github" block>
-                  View on GitHub
+                <Button href={NAV_CTA.wallet.href} variant="outline" size="lg" icon="wallet" block>
+                  {NAV_CTA.wallet.label}
+                </Button>
+                <Button href={GITHUB_URL} external size="lg" icon="github" variant="ghost" block>
+                  Source on GitHub
                 </Button>
                 <p className="nav-sheet__meta">
                   {SITE.license} · {SITE.platform}

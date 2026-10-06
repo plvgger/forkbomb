@@ -48,7 +48,7 @@ export function ReplayFrame({
         </div>
         <iframe
           src={src}
-          title="Replay of a real Forkbomb run: four heads race, one survives"
+          title="Replay of a real Forkbomb run: four forks race, three are killed, one exits 0"
           loading={eager ? "eager" : "lazy"}
           referrerPolicy="no-referrer"
         />

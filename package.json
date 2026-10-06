@@ -1,7 +1,7 @@
 {
-  "name": "forkbomb-heads",
+  "name": "forkbomb",
   "version": "0.1.0",
-  "description": "Fork a coding agent into N sandboxed heads in milliseconds. They race, tests judge, one survives.",
+  "description": "Fork a coding agent into N sandboxed copies of your repo in milliseconds. They race, the tests judge, the losers get killed and one exits 0.",
   "type": "module",
   "license": "MIT",
   "bin": {

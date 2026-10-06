@@ -1,55 +1,36 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Badge, Button, Container, Icon } from "./components";
+import { Badge, Button, Container, Icon, Terminal, type TerminalLine } from "./components";
 import { REPLAY_URL } from "./config";
 import styles from "./not-found.module.css";
 
 // Next adds its own noindex to not-found responses. No canonical: a 404 is not a copy of the home page.
 export const metadata: Metadata = {
-  title: "Page not found",
-  description: "This page does not exist on the Forkbomb site.",
+  title: "Process not found",
+  description: "This page does not exist on the Forkbomb site. It was probably killed.",
   alternates: { canonical: null },
-  openGraph: { title: "Page not found — Forkbomb", description: "This page does not exist on the Forkbomb site.", url: null },
+  openGraph: {
+    title: "Process not found — Forkbomb",
+    description: "This page does not exist on the Forkbomb site.",
+    url: null,
+  },
 };
 
 const ROUTES: { label: string; path: string; href: string; native?: boolean }[] = [
   { label: "Documentation", path: "/docs", href: "/docs" },
   { label: "Install from source", path: "/docs#install", href: "/docs#install" },
-  { label: "Security model", path: "/security", href: "/security" },
+  { label: "Burn ledger", path: "/burns", href: "/burns" },
   { label: "Watch a recorded run", path: "/replay", href: REPLAY_URL, native: true },
 ];
 
-/** The site as a tree: three live branches, and the one that was cut. */
-function SeveredTree() {
-  return (
-    <svg className={styles.tree} viewBox="0 0 360 228" role="img" aria-labelledby="nf-tree-title">
-      <title id="nf-tree-title">
-        A tree of site routes. Docs, security and home are live. The requested page is a severed branch.
-      </title>
-      <g fill="none" strokeWidth="1.5" strokeLinecap="round">
-        <path d="M180 212V150" stroke="var(--border-strong)" />
-        <path d="M180 150C180 110 60 120 60 64" stroke="var(--border-strong)" />
-        <path d="M180 150C180 110 140 110 140 64" stroke="var(--border-strong)" />
-        <path d="M180 150C180 110 220 110 220 64" stroke="var(--border-strong)" />
-        <path d="M180 150C180 118 300 120 300 92" stroke="var(--danger)" strokeDasharray="4 5" opacity="0.8" />
-        <path d="M292 80l16 16M308 80l-16 16" stroke="var(--danger)" strokeWidth="2" />
-      </g>
-      <circle cx="180" cy="212" r="5" fill="var(--text-3)" />
-      <circle cx="180" cy="150" r="4" fill="var(--text-3)" />
-      {[60, 140, 220].map((x) => (
-        <circle key={x} cx={x} cy="58" r="6" fill="var(--surface-3)" stroke="var(--border-strong)" strokeWidth="1.5" />
-      ))}
-      <g fontFamily="var(--font-mono)" fontSize="11" fill="var(--text-2)" textAnchor="middle">
-        <text x="60" y="36">/</text>
-        <text x="140" y="36">/docs</text>
-        <text x="220" y="36">/security</text>
-        <text x="300" y="66" fill="var(--danger)">
-          404
-        </text>
-      </g>
-    </svg>
-  );
-}
+const LINES: TerminalLine[] = [
+  { tone: "cmd", text: "ps -p $PAGE" },
+  { tone: "dim", text: "  PID  STAT  CMD" },
+  { tone: "err", text: "ps: process not found" },
+  { tone: "cmd", text: "kill -0 $PAGE" },
+  { tone: "err", text: "kill: (404) - No such process" },
+  { tone: "out", text: "pid 1 is still running. Pick a route below." },
+];
 
 export default function NotFound() {
   return (
@@ -58,28 +39,26 @@ export default function NotFound() {
         <div className={styles.grid}>
           <div className="stack stack-lg">
             <div className="cluster">
-              <Badge tone="danger" dot>
-                severed
+              <Badge tone="signal" dot>
+                SIGKILL
               </Badge>
               <span className="label">Error 404</span>
             </div>
-            <h1 id="nf-title" className="h1">
-              This head was severed.
+            <h1 id="nf-title" className="display">
+              Process not found.
             </h1>
             <p className="lede">
-              The page you asked for does not exist, or it moved. Nothing else was touched. Pick a branch that survived.
+              It was probably killed. The page you asked for does not exist, or it moved. Nothing else was touched.
             </p>
             <div className="cluster">
               <Button href="/" variant="primary" iconRight="arrowRight">
-                Back to Forkbomb
+                Back to pid 1
               </Button>
               <Button href="/docs">Read the docs</Button>
             </div>
           </div>
 
-          <div className={styles.panel}>
-            <SeveredTree />
-          </div>
+          <Terminal lines={LINES} title="zsh · 404" ariaLabel="Terminal: the requested page is not a running process" />
         </div>
 
         <nav className={styles.routes} aria-label="Pages that exist">

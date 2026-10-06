@@ -25,7 +25,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
                   Try again
                 </button>
                 <a className="btn btn--secondary" href="/">
-                  Back to Forkbomb
+                  Back to the home page
                 </a>
               </div>
             </div>

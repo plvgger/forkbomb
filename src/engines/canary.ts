@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { EventBus, type Stamped } from "../events.js";
-import { exec, forkbombHome } from "../util.js";
+import { appHome, exec } from "../util.js";
 import { claudeSettings, runClaudeCodeHead } from "./claude-code.js";
 
 export interface CanaryCheck {
@@ -22,17 +22,17 @@ const SECRET = "FORKBOMB-CANARY-SECRET-7f3e";
 
 /**
  * Prove the Claude Code engine's isolation on this machine before trusting it:
- * a real headless session, with Forkbomb's exact settings, is told to try to
+ * a real headless session, with the exact settings every fork gets, is told to try to
  * escape. Everything is judged from the filesystem and the tool results, not
  * from what the model says it did.
  */
 export async function runCanary(opts: { bin?: string; model?: string } = {}): Promise<CanaryResult> {
   const bin = opts.bin ?? "claude";
   const version = (await exec(bin, ["--version"]).catch(() => ({ stdout: "unknown" }))).stdout.trim();
-  const base = join(forkbombHome(), "canary");
+  const base = join(appHome(), "canary");
   await mkdir(base, { recursive: true });
   const root = realpathSync(await mkdtemp(join(base, "run-")));
-  const dir = join(root, "head");
+  const dir = join(root, "fork");
   const tmp = join(root, "tmp");
   const vault = join(root, "vault");
   await mkdir(dir);
@@ -117,14 +117,14 @@ export async function runCanary(opts: { bin?: string; model?: string } = {}): Pr
   ];
   const ok = ranInside && checks.every((c) => c.ok);
   const result: CanaryResult = { ok, version, checks };
-  await writeFile(join(forkbombHome(), "canary.json"), JSON.stringify({ ...result, at: new Date().toISOString(), tools: results }, null, 2));
+  await writeFile(join(appHome(), "canary.json"), JSON.stringify({ ...result, at: new Date().toISOString(), tools: results }, null, 2));
   await rm(root, { recursive: true, force: true });
   return result;
 }
 
 /** The last canary result for this exact Claude Code version, if it passed. */
 export function cachedCanaryPass(version: string): boolean {
-  const f = join(forkbombHome(), "canary.json");
+  const f = join(appHome(), "canary.json");
   if (!existsSync(f)) return false;
   try {
     const c = JSON.parse(readFileSync(f, "utf8")) as CanaryResult;

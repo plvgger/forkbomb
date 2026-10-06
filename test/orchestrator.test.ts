@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EventBus, type Stamped } from "../src/events.js";
 import { DEFAULT_PROTECT } from "../src/judge.js";
-import { type RunOptions, runForkbomb } from "../src/orchestrator.js";
+import { type RunOptions, runRace } from "../src/orchestrator.js";
 import { FakeModel, message, tempDir, text, toolUse, writeTree } from "./helpers.js";
 
 const REPO = {
@@ -49,7 +49,7 @@ function collect(): { bus: EventBus; events: Stamped[] } {
   return { bus, events: bus.history };
 }
 
-describe("runForkbomb", () => {
+describe("runRace", () => {
   it("races heads: first real pass wins, cheaters get reverted, slow heads get cut, patch applies", async () => {
     const repo = tempDir("repo");
     writeTree(repo, REPO);
@@ -73,7 +73,7 @@ describe("runForkbomb", () => {
       { surgeon: 30, "root-cause": 10, "test-driven": 4000 },
     );
     const { bus, events } = collect();
-    const res = await runForkbomb(options(repo, model, { apply: true }), bus);
+    const res = await runRace(options(repo, model, { apply: true }), bus);
 
     expect(res.ok).toBe(true);
     expect(res.winner).toBe("1.01");
@@ -105,7 +105,7 @@ describe("runForkbomb", () => {
       "*": [message([fixMul], "tool_use"), message([text("Fixed mul on top of the sum fix.")])],
     });
     const { bus, events } = collect();
-    const res = await runForkbomb(options(repo, model, { heads: 2, rounds: 2 }), bus);
+    const res = await runRace(options(repo, model, { heads: 2, rounds: 2 }), bus);
 
     expect(res.ok).toBe(true);
     expect(res.winner?.startsWith("2.")).toBe(true);
@@ -132,7 +132,7 @@ describe("runForkbomb", () => {
       "root-cause": [message([fixSum, fixMul], "tool_use"), message([text("Two small fixes.")])],
     });
     const { bus, events } = collect();
-    const res = await runForkbomb(options(repo, model, { heads: 2, mode: "best" }), bus);
+    const res = await runRace(options(repo, model, { heads: 2, mode: "best" }), bus);
     expect(res.winner).toBe("1.02");
     expect(events.some((e) => e.type === "sever")).toBe(false);
   });
@@ -141,7 +141,7 @@ describe("runForkbomb", () => {
     const repo = tempDir("repo");
     writeTree(repo, { ...REPO, "math.js": "export const sum = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n" });
     const { bus, events } = collect();
-    const res = await runForkbomb(options(repo, new FakeModel({})), bus);
+    const res = await runRace(options(repo, new FakeModel({})), bus);
     expect(res.ok).toBe(true);
     expect(events.some((e) => e.type === "fork")).toBe(false);
   });
@@ -151,7 +151,7 @@ describe("runForkbomb", () => {
     writeTree(repo, REPO);
     const model = new FakeModel({ "*": [message([fixSum], "tool_use"), message([toolUse("bash", { command: "sleep 20" })], "tool_use")] });
     const { bus, events } = collect();
-    const res = await runForkbomb(options(repo, model, { heads: 1, headTimeoutMs: 1500 }), bus);
+    const res = await runRace(options(repo, model, { heads: 1, headTimeoutMs: 1500 }), bus);
     expect(res.ok).toBe(false);
     const done = events.find((e) => e.type === "head_done");
     expect(done && done.type === "head_done" && done.reason).toBe("timeout");

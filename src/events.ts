@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
 
-export type ForkbombEvent =
+export type RunEvent =
   | {
       type: "run_start";
       runId: string;
@@ -9,7 +9,7 @@ export type ForkbombEvent =
       heads: number;
       rounds: number;
       model: string;
-      engine: "api" | "claude-code";
+      engine: "api" | "claude-code" | "hosted";
       effort: string;
       mode: "race" | "best";
       repo: string;
@@ -62,7 +62,7 @@ export type ForkbombEvent =
   | { type: "run_end"; ok: boolean; ms: number; costUsd: number | null; applied: boolean; patchPath: string | null; best: string | null; bestScore: number }
   | { type: "log"; level: "info" | "warn" | "error"; msg: string };
 
-export type Stamped = ForkbombEvent & { t: number };
+export type Stamped = RunEvent & { t: number };
 
 type Listener = (e: Stamped) => void;
 
@@ -74,7 +74,7 @@ export class EventBus {
 
   constructor(private readonly file?: string) {}
 
-  emit(e: ForkbombEvent): void {
+  emit(e: RunEvent): void {
     const s = { ...e, t: Math.round(performance.now() - this.t0) } as Stamped;
     this.history.push(s);
     if (this.file) appendFileSync(this.file, `${JSON.stringify(s)}\n`);

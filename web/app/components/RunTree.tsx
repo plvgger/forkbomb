@@ -2,8 +2,8 @@ import { RUN } from "../config";
 import { cx } from "./cx";
 
 /**
- * The recorded run's end state as plain, server-rendered HTML: the body, three severed
- * heads and the survivor. Same card language as the replay UI. Needs no JS.
+ * The recorded run's end state as plain, server-rendered HTML: pid 1 (the parent repo copy),
+ * three killed forks and the one that exited 0. Same card language as the replay UI. Needs no JS.
  */
 export function RunTree({ compact = false, className }: { compact?: boolean; className?: string }) {
   const base = RUN.baseline;
@@ -11,13 +11,13 @@ export function RunTree({ compact = false, className }: { compact?: boolean; cla
   return (
     <ol
       className={cx("run-tree", compact && "run-tree--compact", className)}
-      aria-label={`End state of run ${RUN.id}: ${RUN.severed} heads severed, head ${RUN.winner.id} survives with ${RUN.winner.passed} of ${RUN.winner.total} tests passing`}
+      aria-label={`End state of run ${RUN.id}: ${RUN.severed} forks killed, fork ${RUN.winner.id} exited 0 with ${RUN.winner.passed} of ${RUN.winner.total} tests passing`}
     >
       <li className="run-tree__item run-tree__item--body">
         <div className="run-tree__card">
-          <span className="run-tree__id">BODY</span>
+          <span className="run-tree__id">PID 1</span>
           <span className="run-tree__name">{RUN.repo}</span>
-          <span className="run-tree__chip">SOURCE</span>
+          <span className="run-tree__chip">PARENT</span>
           {!compact && (
             <span className="run-tree__foot">
               <span className="run-tree__note">baseline</span>
@@ -38,13 +38,13 @@ export function RunTree({ compact = false, className }: { compact?: boolean; cla
             <div className="run-tree__card">
               <span className="run-tree__id">{h.id}</span>
               <span className="run-tree__name">{h.strategy}</span>
-              <span className="run-tree__chip">{won ? "SURVIVOR" : "SEVERED"}</span>
+              <span className="run-tree__chip">{won ? "EXIT 0" : "KILLED"}</span>
               {!compact && (
                 <span className="run-tree__foot">
                   <span className="run-tree__note">
                     {won
                       ? `${RUN.patch.lines} lines in ${RUN.patch.files} file`
-                      : `severed · ${RUN.winner.id} passed first`}
+                      : `SIGKILL · ${RUN.winner.id} passed first`}
                   </span>
                   {won && (
                     <>
