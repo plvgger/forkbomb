@@ -11,6 +11,22 @@ export function track(pid: number | undefined): () => void {
   return () => groups.delete(pid);
 }
 
+/** Stop tracking a process group (it exited on its own). */
+export function untrack(pid: number | undefined): void {
+  if (pid) groups.delete(pid);
+}
+
+/** Kill one process group and stop tracking it. */
+export function killGroup(pid: number | undefined, signal: NodeJS.Signals = "SIGKILL"): void {
+  if (!pid) return;
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    // already gone
+  }
+  groups.delete(pid);
+}
+
 /** Kill every tracked process group. Safe to call more than once. */
 export function killAll(signal: NodeJS.Signals = "SIGKILL"): void {
   for (const pid of groups) {

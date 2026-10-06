@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { claudeEnv, claudeSettings, runClaudeCodeHead } from "../src/engines/claude-code.js";
@@ -14,14 +14,16 @@ function setup(scripts: Record<string, unknown[]>) {
   const scriptFile = join(work, "scripts.json");
   const log = join(work, "calls.jsonl");
   writeFileSync(scriptFile, JSON.stringify(scripts));
-  process.env.FAKE_CLAUDE_SCRIPTS = scriptFile;
-  process.env.FAKE_CLAUDE_LOG = log;
-  return { work, log };
+  // The engine hands claude an allowlisted env, so the stand-in gets its
+  // config from a per-test wrapper instead of inherited variables.
+  const bin = join(work, "claude");
+  const q = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+  writeFileSync(bin, `#!/bin/sh\nFAKE_CLAUDE_SCRIPTS=${q(scriptFile)} FAKE_CLAUDE_LOG=${q(log)} exec ${q(process.execPath)} ${q(FAKE)} "$@"\n`);
+  chmodSync(bin, 0o755);
+  return { work, log, bin };
 }
 
 afterEach(() => {
-  delete process.env.FAKE_CLAUDE_SCRIPTS;
-  delete process.env.FAKE_CLAUDE_LOG;
   delete process.env.ANTHROPIC_API_KEY;
 });
 
@@ -47,11 +49,11 @@ function head(dir: string, over: Partial<Parameters<typeof runClaudeCodeHead>[0]
 
 describe("claude-code engine", () => {
   it("streams tool calls, returns the summary, and never hands the child an API key", async () => {
-    const { work, log } = setup({ surgeon: [{ write: { path: "a.txt", content: "hi" } }, { bash: "node --test" }, { text: "Fixed it." }] });
+    const { work, log, bin } = setup({ surgeon: [{ write: { path: "a.txt", content: "hi" } }, { bash: "node --test" }, { text: "Fixed it." }] });
     process.env.ANTHROPIC_API_KEY = "sk-should-not-pass";
     const dir = join(work, "head");
     writeTree(dir, { "README.md": "x" });
-    const { cfg, bus } = head(dir);
+    const { cfg, bus } = head(dir, { claudeBin: bin });
     const res = await runClaudeCodeHead(cfg, claudeSettings({ dir, tmp: cfg.tmp, network: false }));
     expect(res.reason).toBe("end_turn");
     expect(res.summary).toBe("Fixed it.");
@@ -74,10 +76,10 @@ describe("claude-code engine", () => {
   });
 
   it("cuts a head off when it's severed", async () => {
-    const { work } = setup({ surgeon: [{ sleep: 10_000 }, { text: "too late" }] });
+    const { work, bin } = setup({ surgeon: [{ sleep: 10_000 }, { text: "too late" }] });
     const dir = join(work, "head");
     writeTree(dir, { "README.md": "x" });
-    const { cfg, ctl } = head(dir);
+    const { cfg, ctl } = head(dir, { claudeBin: bin });
     setTimeout(() => ctl.abort(), 300);
     const t0 = performance.now();
     const res = await runClaudeCodeHead(cfg, {});
@@ -86,10 +88,10 @@ describe("claude-code engine", () => {
   });
 
   it("explains a login problem", async () => {
-    const { work } = setup({ surgeon: [{ error: "Failed to authenticate: OAuth session expired and could not be refreshed" }] });
+    const { work, bin } = setup({ surgeon: [{ error: "Failed to authenticate: OAuth session expired and could not be refreshed" }] });
     const dir = join(work, "head");
     writeTree(dir, { "README.md": "x" });
-    const res = await runClaudeCodeHead(head(dir).cfg, {});
+    const res = await runClaudeCodeHead(head(dir, { claudeBin: bin }).cfg, {});
     expect(res.reason).toBe("error");
     expect(res.error).toMatch(/claude auth login/);
   });
@@ -107,7 +109,7 @@ describe("claude-code engine", () => {
   });
 
   it("runs a whole race on the Claude Code engine", async () => {
-    const { work } = setup({
+    const { work, bin } = setup({
       surgeon: [{ write: { path: "math.js", content: "export const sum = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n" } }, { text: "Fixed both." }],
       "*": [{ sleep: 8000 }, { text: "slow" }],
     });
@@ -129,7 +131,7 @@ describe("claude-code engine", () => {
         heads: 3,
         rounds: 1,
         mode: "race",
-        claudeCode: { bin: FAKE },
+        claudeCode: { bin },
         effort: "low",
         maxTurns: 10,
         headTimeoutMs: 30_000,

@@ -78,7 +78,7 @@ export const RUN = {
   durationS: 38.7,
 } as const;
 
-export const TEST_COUNT = 61; // automated tests in Hydra's own suite
+export const TEST_COUNT = 64; // automated tests in Hydra's own suite
 
 // Real terminal transcript of RUN (trimmed). Tones map to <Terminal> line tones.
 export const RUN_TRANSCRIPT: { text: string; tone?: "cmd" | "out" | "dim" | "ok" | "err" | "warn" | "info" }[] = [
