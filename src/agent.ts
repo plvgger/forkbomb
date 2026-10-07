@@ -203,12 +203,13 @@ export async function runHead(cfg: HeadConfig): Promise<HeadResult> {
 }
 
 export function systemPrompt(opts: { bashTimeoutS: number; engine: "api" | "claude-code" | "hosted" }): string {
-  const fresh = `- bash runs each command in a fresh shell that starts at the repository root, so \`cd\` does not carry over between calls. Chain commands with && when you need to.`;
+  // /workspace is a name the editor understands, not a real directory: bash must use relative paths.
+  const fresh = `- bash runs each command in a fresh shell that starts at the repository root, so \`cd\` does not carry over between calls. Use relative paths in bash (\`ls\`, \`cat src/x.js\`); there is no /workspace directory in the shell. Chain commands with && when you need to.`;
   const where =
     opts.engine === "api"
-      ? `- The repository root is /workspace. Give the text editor paths under /workspace.\n${fresh}`
+      ? `- The text editor sees the repository root as /workspace. Give it paths under /workspace.\n${fresh}`
       : opts.engine === "hosted"
-        ? `- The repository root is /workspace. Give the edit tool paths under /workspace.\n${fresh}`
+        ? `- The edit tool sees the repository root as /workspace. Give it paths under /workspace.\n${fresh}`
         : `- The repository root is your current working directory. Stay inside it; reads and writes outside it are denied.`;
   return `You are one fork of ${BRAND.name}. Several copies of you are working on the same task at the same time, each in its own private copy of the repository and each with a different strategy. When a fork finishes, the repository's test suite runs on that fork's copy. The first fork to make the suite pass wins, and the others are cut off.
 

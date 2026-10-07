@@ -203,7 +203,8 @@ describe("hosted engine: one head", () => {
     expect(chats[0]!.body.stream).toBe(false);
     expect(chats[0]!.body.tools?.map((t) => t.function.name)).toEqual(["bash", "edit"]);
     expect(chats[0]!.body.messages[0]).toMatchObject({ role: "system" });
-    expect(chats[0]!.body.messages[0]!.content).toContain("edit tool paths under /workspace");
+    expect(chats[0]!.body.messages[0]!.content).toContain("Give it paths under /workspace");
+    expect(chats[0]!.body.messages[0]!.content).toContain("there is no /workspace directory in the shell");
 
     // Each tool result answers its call, and carries what the workspace said.
     const last = (i: number) => chats[i]!.body.messages.at(-1)!;
