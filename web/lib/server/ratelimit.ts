@@ -5,13 +5,14 @@ import { getConfig } from "./config";
 import { getDb, int } from "./db";
 import { ApiError } from "./http";
 
-export type Bucket = "workspace_create" | "verify" | "gateway" | "rpc";
+export type Bucket = "workspace_create" | "verify" | "gateway" | "rpc" | "admin";
 
 const BUCKETS: Record<Bucket, { windowMs: number; limit: () => number }> = {
   workspace_create: { windowMs: 60 * 60_000, limit: () => getConfig().limits.workspaceCreatePerHour },
   verify: { windowMs: 60_000, limit: () => getConfig().limits.verifyPerMinute },
   gateway: { windowMs: 60_000, limit: () => getConfig().limits.gatewayPerMinute },
   rpc: { windowMs: 60_000, limit: () => getConfig().limits.rpcPerMinute },
+  admin: { windowMs: 60_000, limit: () => 10 },
 };
 
 export type RateLimitResult = { ok: boolean; limit: number; remaining: number; resetAt: Date; count: number };

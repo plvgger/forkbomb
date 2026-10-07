@@ -23,6 +23,10 @@ export type Config = {
   solanaRpcUrl: string;
   keyPepper: string;
   cronSecret: string;
+  /** Operator secret for POST /api/admin/grant. Under 32 characters disables the route. */
+  adminSecret: string;
+  /** Largest single operator grant, micro-USD. */
+  maxGrantMicroUsd: number;
   databaseUrl: string;
   pricing: {
     /** USD per 1M input tokens, as integer micro-USD (0.60 USD -> 600_000). */
@@ -56,6 +60,8 @@ export function getConfig(): Config {
     solanaRpcUrl: (env.SOLANA_RPC_URL || "").trim() || PUBLIC_MAINNET_RPC,
     keyPepper: env.KEY_PEPPER || "",
     cronSecret: env.CRON_SECRET || "",
+    adminSecret: env.ADMIN_SECRET || "",
+    maxGrantMicroUsd: usdToMicro(env.MAX_GRANT_USD, 100_000_000),
     databaseUrl: env.DATABASE_URL || "",
     pricing: {
       inputPerMTokMicroUsd: usdToMicro(env.PRICE_INPUT_PER_MTOK_USD, 600_000),
