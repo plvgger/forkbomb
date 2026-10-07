@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../lib/server/db";
 import { formatScaled, parseDecimal, PRICE_SCALE } from "../lib/server/decimal";
-import { burnPrice, fetchQuote, latestSample, priceSummary, PriceError, samplePrice, timeWeightedAverage } from "../lib/server/price";
+import { burnPrice, ensureFreshSample, fetchQuote, latestSample, ON_DEMAND_MAX_AGE_MS, priceSummary, PriceError, samplePrice, timeWeightedAverage } from "../lib/server/price";
 import { MINT } from "./fixtures/transactions";
 import { fakeChain, freshDb, MIN, seedSamples, useTokenEnv, type FakeChain } from "./helpers";
 
@@ -155,5 +155,51 @@ describe("priceSummary", () => {
     const s = await priceSummary(now);
     expect(s.latest).toMatchObject({ priceUsd: "0.003", source: "jupiter" });
     expect(s.twap).toEqual({ windowMinutes: 15, priceUsd: "0.002", samples: 2 });
+  });
+});
+
+describe("ensureFreshSample", () => {
+  const count = async () => Number((await db.query<{ n: unknown }>("SELECT COUNT(*)::int AS n FROM price_samples"))[0]!.n);
+
+  it("samples when there is no sample or the latest is stale, and not while it is fresh", async () => {
+    chain.jupiter = 0.002;
+    const t0 = new Date("2026-10-07T12:00:00Z");
+    expect(await ensureFreshSample(t0)).toMatchObject({ source: "jupiter" });
+    expect(await ensureFreshSample(new Date(t0.getTime() + ON_DEMAND_MAX_AGE_MS - 1))).toBeNull();
+    expect(await count()).toBe(1);
+    expect(await ensureFreshSample(new Date(t0.getTime() + ON_DEMAND_MAX_AGE_MS))).not.toBeNull();
+    expect(await count()).toBe(2);
+  });
+
+  it("takes one sample for concurrent readers", async () => {
+    chain.jupiter = 0.002;
+    const now = new Date("2026-10-07T12:00:00Z");
+    await Promise.all(Array.from({ length: 8 }, () => ensureFreshSample(now)));
+    expect(await count()).toBe(1);
+    expect(chain.calls.price.filter((s) => s === "jupiter")).toHaveLength(1);
+  });
+
+  it("never throws: price sources down -> null, logged, nothing stored", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await ensureFreshSample(new Date())).toBeNull();
+    expect(await count()).toBe(0);
+    expect(err).toHaveBeenCalled();
+  });
+
+  it("does nothing before launch (TOKEN_MINT unset)", async () => {
+    vi.stubEnv("TOKEN_MINT", "");
+    chain.jupiter = 0.002;
+    expect(await ensureFreshSample(new Date())).toBeNull();
+    expect(chain.calls.price).toHaveLength(0);
+  });
+
+  it("gives a burn made while the burn panel was open a pre-burn anchor, with no scheduler at all", async () => {
+    chain.jupiter = 0.002;
+    const open = new Date(Date.now() - 4 * MIN);
+    await ensureFreshSample(open); // the panel's first /api/price read
+    const burnAt = new Date(Date.now() - 3 * MIN);
+    await ensureFreshSample(new Date()); // the verify call, after the burn
+    const price = await burnPrice(burnAt, new Date());
+    expect(price).toMatchObject({ ok: true });
   });
 });

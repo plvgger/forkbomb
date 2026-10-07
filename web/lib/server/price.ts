@@ -144,6 +144,38 @@ export async function samplePrice(now: Date = new Date()): Promise<Sample> {
   return { ts: now, priceAtto: quote.priceAtto, source: quote.source };
 }
 
+/** A read of the price takes a new sample when the latest is older than this (see ensureFreshSample). */
+export const ON_DEMAND_MAX_AGE_MS = 2 * 60_000;
+let sampling: Promise<Sample | null> | null = null;
+
+/**
+ * Samples now if the latest sample is ON_DEMAND_MAX_AGE_MS old or older. Burns are priced from samples, and a
+ * burn with no sample in the 30 minutes before it can never be credited, so sampling can't depend on a scheduler
+ * alone (GitHub delays or drops scheduled runs). The burn panel reads /api/price every minute while open, so
+ * whoever is about to burn keeps a fresh pre-burn sample in place. At most one sample per instance at a time.
+ * Never throws: returns the new sample, or null when none was needed or the price sources failed (logged).
+ */
+export async function ensureFreshSample(now: Date = new Date(), maxAgeMs = ON_DEMAND_MAX_AGE_MS): Promise<Sample | null> {
+  const mint = getConfig().tokenMint;
+  if (!mint) return null;
+  try {
+    const latest = await latestSample(mint, now);
+    if (latest && now.getTime() - latest.ts.getTime() < maxAgeMs) return null;
+  } catch (err) {
+    console.error("[price] on-demand sample check failed", err);
+    return null;
+  }
+  sampling ??= samplePrice(now)
+    .catch((err: unknown) => {
+      console.error("[price] on-demand sample failed", err instanceof Error ? err.message : err);
+      return null;
+    })
+    .finally(() => {
+      sampling = null;
+    });
+  return sampling;
+}
+
 /**
  * Time-weighted average of samples (sorted by ts) up to windowEnd: each sample holds until the next one,
  * the last until windowEnd. Falls back to the plain mean when all samples share one instant. Floors.
