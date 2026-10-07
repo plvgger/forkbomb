@@ -1,5 +1,6 @@
 # Monthly dependency updates. Each entry groups every update into one PR,
-# so each ecosystem opens at most one PR per month.
+# so each ecosystem opens at most one PR per month. npm major versions are
+# upgraded by hand, with a changelog read and both test suites run.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -12,6 +13,9 @@ updates:
     groups:
       cli:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: /web
@@ -23,6 +27,9 @@ updates:
     groups:
       web:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: /ops
@@ -34,6 +41,9 @@ updates:
     groups:
       ops:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
