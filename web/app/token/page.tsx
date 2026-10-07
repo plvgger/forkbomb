@@ -557,6 +557,10 @@ export default function TokenPage() {
                         <Badge tone="ok" dot>
                           works today
                         </Badge>
+                      ) : e.id === "hosted" && STATUS.hostedPoolLive ? (
+                        <Badge tone="signal" dot>
+                          opens at launch
+                        </Badge>
                       ) : (
                         <Badge tone="warn" dot>
                           coming online

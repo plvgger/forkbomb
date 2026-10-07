@@ -37,7 +37,7 @@ export const SITE = {
 /** Honest launch status. Flip these only when they are true. */
 export const STATUS = {
   tokenLive: CONTRACT_ADDRESS.trim().length > 0,
-  hostedPoolLive: false, // hosted GPU pool is not provisioned yet: say "coming online"
+  hostedPoolLive: true, // the GPU pool serves the gateway (RunPod). Credit to spend on it opens with the token.
   appLive: true, // /app is live (wallet connect, keys, credit). Burning stays closed until tokenLive.
 } as const;
 
@@ -74,7 +74,7 @@ export const REQUIREMENTS = [
   "Claude Code logged in (Pro or Max plan), or an Anthropic API key",
 ] as const;
 
-/** Engines the CLI can drive. `hosted` is paid with credit from burning $FORKBOMB and is not live yet. */
+/** Engines the CLI can drive. `hosted` is paid with credit from burning $FORKBOMB: usable once the pool is up and burns are open. */
 export const ENGINES = [
   {
     id: "claude-code",
@@ -92,7 +92,7 @@ export const ENGINES = [
     id: "hosted",
     name: "Forkbomb hosted",
     pays: "Credit from burning $FORKBOMB",
-    live: false,
+    live: STATUS.hostedPoolLive && STATUS.tokenLive,
   },
 ] as const;
 

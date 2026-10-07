@@ -664,7 +664,7 @@ const ENGINE_CARDS: EngineCard[] = [
       ["Setup", "A workspace API key from the app"],
     ],
     note: STATUS.hostedPoolLive
-      ? "The code your forks read is sent to Forkbomb's hosted model."
+      ? `The code your forks read is sent to Forkbomb's hosted model.${STATUS.tokenLive ? "" : " Credit opens when the coin launches."}`
       : "The GPU pool isn't provisioned yet. Until it is, run on your Claude plan or an API key.",
   },
 ];
@@ -823,7 +823,9 @@ const FAQ: { q: string; a: ReactNode }[] = [
   {
     q: "Is the hosted pool live?",
     a: STATUS.hostedPoolLive
-      ? "Yes. Hosted forks run on the GPU pool and draw down your workspace credit."
+      ? STATUS.tokenLive
+        ? "Yes. Hosted forks run on the GPU pool and draw down your workspace credit."
+        : `The GPU pool is serving. Credit comes from burning ${SITE.ticker}, which opens when the coin launches. Until then the claude-code and api engines work with no token involved.`
       : "Not yet. The GPU pool is coming online and the coin hasn't launched. The claude-code and api engines work today, with no token involved.",
   },
   {
