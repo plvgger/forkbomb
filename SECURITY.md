@@ -1,6 +1,6 @@
 # Security
 
-Forkbomb runs AI coding agents on your machine, so isolation is the core of the product. The threat model, the isolation layers and their limits are written up at https://forkbomb-fun.vercel.app/security.
+Forkbomb runs AI coding agents on your machine, so isolation is the core of the product. The threat model, the isolation layers and their limits are written up at https://forkbomb.fun/security.
 
 ## Status
 
