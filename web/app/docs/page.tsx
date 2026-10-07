@@ -559,7 +559,14 @@ export default function DocsPage() {
               >
                 <p className={s.statusText}>
                   {STATUS.hostedPoolLive ? (
-                    "The hosted GPU pool is live."
+                    STATUS.tokenLive ? (
+                      "The hosted GPU pool is live."
+                    ) : (
+                      <>
+                        The hosted GPU pool is live. Credit comes from burns, which open when {SITE.ticker} launches;
+                        until then a workspace with no credit gets <code>402 insufficient_credits</code>.
+                      </>
+                    )
                   ) : (
                     <>
                       The GPU pool is not provisioned yet. Until it is, the gateway answers{" "}
@@ -1408,15 +1415,28 @@ export default function DocsPage() {
                     , which never need credit.
                   </p>
                 </Issue>
-                <Issue
-                  id="ts-pool"
-                  title="Hosted pool not provisioned"
-                  msg={`${BIN}: the hosted pool is not provisioned yet (upstream_unavailable: …). Use --engine api or --engine claude-code for now.`}
-                >
-                  <p>
-                    Expected while the pool is coming online. Nothing was charged. Use one of the other engines.
-                  </p>
-                </Issue>
+                {STATUS.hostedPoolLive ? (
+                  <Issue
+                    id="ts-pool"
+                    title="Hosted pool warming up"
+                    msg={`${BIN}: the hosted pool is warming up or unreachable after 4 retries (upstream_unavailable: …). Try again shortly, or use --engine api or --engine claude-code.`}
+                  >
+                    <p>
+                      GPU workers shut down after a quiet spell, and the first request after that waits while one starts
+                      and loads the model. Nothing was charged. Retry in a minute, or use one of the other engines.
+                    </p>
+                  </Issue>
+                ) : (
+                  <Issue
+                    id="ts-pool"
+                    title="Hosted pool not provisioned"
+                    msg={`${BIN}: the hosted pool is not provisioned yet (upstream_unavailable: …). Use --engine api or --engine claude-code for now.`}
+                  >
+                    <p>
+                      Expected while the pool is coming online. Nothing was charged. Use one of the other engines.
+                    </p>
+                  </Issue>
+                )}
                 <Issue
                   id="ts-network"
                   title="--network with Claude Code"

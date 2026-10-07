@@ -118,8 +118,8 @@ const sections: LegalSection[] = [
           what is kept and for how long.
         </p>
         <p>
-          The model runs on rented GPU hardware. That provider processes the requests in transit to run the model, under
-          its own terms.
+          The model runs on GPUs rented from RunPod. RunPod processes the requests in transit to run the model, under its
+          own terms.
         </p>
       </>
     ),
