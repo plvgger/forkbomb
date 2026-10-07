@@ -12,7 +12,6 @@ export const ISSUES_URL = `${GITHUB_URL}/issues`;
  * Set by the CLI (src/util.ts resolveHome, src/engines/canary.ts), not by the brand.
  */
 export const CLI_HOME = "~/.forkbomb";
-export const CLI_LEGACY_HOME = "~/.hydra"; // pre-rename installs; the CLI still reads it while ~/.forkbomb doesn't exist
 export const CLI_PROBE = ".git/forkbomb-probe";
 export const CONTRACT_ADDRESS = ""; // set at coin launch; empty renders the "launching" state
 export const TOKEN_MEMO_PREFIX = "forkbomb:"; // burn memo is `forkbomb:<workspaceId>`; must equal `${BRAND.slug}:` (lib/server/config.ts, pinned by a test)
@@ -100,15 +99,14 @@ export const ENGINES = [
 export const BENCH = {
   machine: "MacBook Air (M2, 24 GB)",
   workload: "80 MB node_modules tree, 4,400 files",
-  heads: 16, // forks
-  clonefile: { perHeadMs: 45, extraDisk: "22 MB", extraDiskMB: 22 },
-  copy: { perHeadMs: 1108, extraDisk: "1.3 GB", extraDiskMB: 1300 },
+  forks: 16,
+  clonefile: { perForkMs: 45, extraDisk: "22 MB", extraDiskMB: 22 },
+  copy: { perForkMs: 1108, extraDisk: "1.3 GB", extraDiskMB: 1300 },
   speedup: "≈24×",
   diskSaving: "≈60×",
 } as const;
 
 // A real recorded run. Same events power /replay.
-// Field names are kept from the event log (heads = forks, severed = killed).
 export const RUN = {
   date: "2026-10-05",
   id: "20261005-155223",
@@ -116,7 +114,7 @@ export const RUN = {
   repo: "demo calc repo",
   testCmd: "node --test",
   baseline: { passing: 4, failing: 10, total: 14 },
-  heads: [
+  forks: [
     { id: "1.01", strategy: "surgeon" },
     { id: "1.02", strategy: "root-cause" },
     { id: "1.03", strategy: "test-driven" },
@@ -124,14 +122,10 @@ export const RUN = {
   ],
   forkMsEach: 1.13,
   winner: { id: "1.04", strategy: "rewriter", passed: 14, total: 14 },
-  severed: 3,
+  killed: 3,
   patch: { lines: 94, files: 1 },
   durationS: 38.7,
 } as const;
-
-/** Vocabulary aliases for RUN. Same numbers. */
-export const RUN_FORKS = RUN.heads;
-export const RUN_KILLED = RUN.severed;
 
 /**
  * Per-fork detail from the same run's event log (public/replay/events.jsonl).
@@ -180,7 +174,7 @@ export const RUN_PS: {
 ];
 export const RUN_END_S = 38.5; // when the judge passed 1.04 and killed the rest
 
-export const TEST_COUNT = 64; // automated tests in the CLI's own suite
+export const TEST_COUNT = 94; // tests in the CLI suite (`npx vitest list` at the repo root); test/site.test.ts checks it
 
 // Real terminal transcript of RUN (trimmed). Tones map to <Terminal> line tones.
 export const RUN_TRANSCRIPT: {

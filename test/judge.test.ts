@@ -55,8 +55,8 @@ describe("protect globs", () => {
   });
 });
 
-/** A body repo with a base commit, plus one head forked from it. */
-async function bodyAndHead(files: Record<string, string>) {
+/** A body repo with a base commit, plus one fork cloned from it. */
+async function bodyAndFork(files: Record<string, string>) {
   const body = tempDir("body");
   writeTree(body, files);
   const git = (...a: string[]) => execFileSync("git", ["-C", body, "-c", "user.name=t", "-c", "user.email=t@t", ...a]).toString().trim();
@@ -66,9 +66,9 @@ async function bodyAndHead(files: Record<string, string>) {
   const base = git("rev-parse", "HEAD");
   const forker = await ApfsForker.create();
   const work = tempDir("work");
-  const head = join(work, "head");
-  await forker.fork(body, [head]);
-  return { body, head, base, forker, work };
+  const fork = join(work, "fork");
+  await forker.fork(body, [fork]);
+  return { body, fork, base, forker, work };
 }
 
 describe("judge", () => {
@@ -82,9 +82,9 @@ describe("judge", () => {
     "node_modules/dep/package.json": JSON.stringify({ name: "dep", type: "module", main: "index.js" }),
     "node_modules/dep/index.js": "export const helper = (x) => x;\n",
   };
-  const run = async (ctx: Awaited<ReturnType<typeof bodyAndHead>>) =>
+  const run = async (ctx: Awaited<ReturnType<typeof bodyAndFork>>) =>
     judge(
-      { root: ctx.head, tmp: `${ctx.head}-tmp`, network: false, gitWrite: false },
+      { root: ctx.fork, tmp: `${ctx.fork}-tmp`, network: false, gitWrite: false },
       {
         testCmd: "node --test",
         baseSha: ctx.base,
@@ -102,9 +102,9 @@ describe("judge", () => {
     );
 
   it("scores a real fix and captures the patch", async () => {
-    const ctx = await bodyAndHead(files);
-    writeFileSync(join(ctx.head, "sum.js"), 'import { helper } from "dep";\nexport const sum = (a, b) => helper(a + b);\n');
-    writeFileSync(join(ctx.head, "NOTES.md"), "new file\n");
+    const ctx = await bodyAndFork(files);
+    writeFileSync(join(ctx.fork, "sum.js"), 'import { helper } from "dep";\nexport const sum = (a, b) => helper(a + b);\n');
+    writeFileSync(join(ctx.fork, "NOTES.md"), "new file\n");
     const v = await run(ctx);
     expect(v.score).toBe(1);
     expect(v.passed).toBe(2);
@@ -118,9 +118,9 @@ describe("judge", () => {
   });
 
   it("drops edits to tests and planted test files from what gets judged", async () => {
-    const ctx = await bodyAndHead(files);
-    writeFileSync(join(ctx.head, "sum.test.js"), 'import { test } from "node:test";\ntest("adds", () => {});\ntest("zero", () => {});\n');
-    writeFileSync(join(ctx.head, "extra.test.js"), 'import { test } from "node:test";\ntest("free", () => {});\n');
+    const ctx = await bodyAndFork(files);
+    writeFileSync(join(ctx.fork, "sum.test.js"), 'import { test } from "node:test";\ntest("adds", () => {});\ntest("zero", () => {});\n');
+    writeFileSync(join(ctx.fork, "extra.test.js"), 'import { test } from "node:test";\ntest("free", () => {});\n');
     const v = await run(ctx);
     expect(v.tampered.sort()).toEqual(["extra.test.js", "sum.test.js"]);
     expect(v.score).toBeLessThan(1);
@@ -129,17 +129,17 @@ describe("judge", () => {
   });
 
   it("ignores hacks to gitignored files like node_modules", async () => {
-    const ctx = await bodyAndHead(files);
+    const ctx = await bodyAndFork(files);
     // Make the dependency undo the bug instead of fixing sum.js.
-    writeFileSync(join(ctx.head, "node_modules/dep/index.js"), "export const helper = (x) => (x === -1 ? 5 : x);\n");
+    writeFileSync(join(ctx.fork, "node_modules/dep/index.js"), "export const helper = (x) => (x === -1 ? 5 : x);\n");
     const v = await run(ctx);
     expect(v.patch.trim()).toBe("");
     expect(v.score).toBeLessThan(1);
   });
 
   it("doesn't count a suite that silently lost tests as a pass", async () => {
-    const ctx = await bodyAndHead(files);
-    writeFileSync(join(ctx.head, "sum.js"), 'process.exit(0);\nimport { helper } from "dep";\nexport const sum = (a, b) => helper(a + b);\n');
+    const ctx = await bodyAndFork(files);
+    writeFileSync(join(ctx.fork, "sum.js"), 'process.exit(0);\nimport { helper } from "dep";\nexport const sum = (a, b) => helper(a + b);\n');
     const v = await run(ctx);
     expect(v.score).toBeLessThan(1);
   });

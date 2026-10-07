@@ -1,5 +1,5 @@
-import type { HeadResult } from "../agent.js";
-import { BRAND, DEFAULT_HOSTED_URL, HOSTED_KEY_ENV, HOSTED_URL_ENV, brandEnv } from "../brand.js";
+import type { ForkResult } from "../agent.js";
+import { BRAND, DEFAULT_HOSTED_URL, HOSTED_KEY_ENV, HOSTED_URL_ENV } from "../brand.js";
 import type { EventBus } from "../events.js";
 import type { ToolOutcome, Workspace } from "../tools.js";
 import type { Semaphore } from "../util.js";
@@ -51,7 +51,7 @@ export interface HostedMe {
   pricing: { inputPerMTokUsd: number; outputPerMTokUsd: number; model: string };
 }
 
-/** The seam between a hosted head and the gateway. Tests point a real client at a local mock. */
+/** The seam between a hosted fork and the gateway. Tests point a real client at a local mock. */
 export interface HostedChat {
   /** Shown in run_start, e.g. "hosted (example.com)". Never contains the key. */
   readonly label: string;
@@ -121,13 +121,10 @@ export interface HostedSettings {
   apiKey: string | null;
 }
 
-/**
- * Read the hosted engine's settings from the environment (call the .env loader first).
- * The pre-rename names (HYDRA_API_KEY, HYDRA_HOSTED_URL) still work as fallbacks.
- */
+/** Read the hosted engine's settings from the environment (call the .env loader first). Blank values count as unset. */
 export function hostedSettings(env: NodeJS.ProcessEnv = process.env): HostedSettings {
-  const baseUrl = brandEnv(HOSTED_URL_ENV, env)?.trim() || DEFAULT_HOSTED_URL;
-  const apiKey = brandEnv(HOSTED_KEY_ENV, env)?.trim() || null;
+  const baseUrl = env[HOSTED_URL_ENV]?.trim() || DEFAULT_HOSTED_URL;
+  const apiKey = env[HOSTED_KEY_ENV]?.trim() || null;
   return { baseUrl, apiKey };
 }
 
@@ -353,12 +350,12 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** Shared by every head in a run: the first head to hit 402 records why, and no other head makes another call. */
+/** Shared by every fork in a run: the first fork to hit 402 records why, and no other fork makes another call. */
 export interface CreditGate {
   exhausted: string | null;
 }
 
-export interface HostedHeadConfig {
+export interface HostedForkConfig {
   id: string;
   workspace: Workspace;
   client: HostedChat;
@@ -366,14 +363,14 @@ export interface HostedHeadConfig {
   prompt: string;
   maxTurns: number;
   signal: AbortSignal;
-  abortReason: () => "severed" | "timeout";
+  abortReason: () => "killed" | "timeout";
   bus: EventBus;
   apiSlots: Semaphore;
   credit: CreditGate;
 }
 
-/** One hosted head: a Chat Completions tool-calling loop over bash and edit, inside its own clone. */
-export async function runHostedHead(cfg: HostedHeadConfig): Promise<HeadResult> {
+/** One hosted fork: a Chat Completions tool-calling loop over bash and edit, inside its own clone. */
+export async function runHostedFork(cfg: HostedForkConfig): Promise<ForkResult> {
   const { bus, id, signal, workspace, credit } = cfg;
   const messages: ChatMessage[] = [
     { role: "system", content: cfg.system },
@@ -387,7 +384,7 @@ export async function runHostedHead(cfg: HostedHeadConfig): Promise<HeadResult> 
   let callSeq = 0;
   const clean = (s: string) => cfg.client.redact?.(s) ?? s;
 
-  const finish = (reason: HeadResult["reason"], error?: string): HeadResult => ({
+  const finish = (reason: ForkResult["reason"], error?: string): ForkResult => ({
     reason,
     turns,
     inputTokens,
@@ -407,7 +404,7 @@ export async function runHostedHead(cfg: HostedHeadConfig): Promise<HeadResult> 
       let turn: ChatTurn;
       try {
         if (signal.aborted) return finish(cfg.abortReason());
-        // Another head may have run the workspace dry while this one waited for a slot.
+        // Another fork may have run the workspace dry while this one waited for a slot.
         if (credit.exhausted) return finish("error", credit.exhausted);
         turns++;
         turn = await cfg.client.chat({ messages, tools: HOSTED_TOOLS }, signal);
@@ -424,11 +421,11 @@ export async function runHostedHead(cfg: HostedHeadConfig): Promise<HeadResult> 
       if (!choice) return finish("error", "the hosted gateway returned no choices");
       const m = choice.message ?? {};
       const reasoning = typeof m.reasoning_content === "string" ? m.reasoning_content.trim() : "";
-      if (reasoning) bus.emit({ type: "note", head: id, text: reasoning.slice(0, 280) });
+      if (reasoning) bus.emit({ type: "note", fork: id, text: reasoning.slice(0, 280) });
       const content = typeof m.content === "string" ? m.content : null;
       if (content?.trim()) {
         summary = content.trim();
-        bus.emit({ type: "note", head: id, text: summary.slice(0, 280) });
+        bus.emit({ type: "note", fork: id, text: summary.slice(0, 280) });
       }
 
       // Every call needs an id for its result to point at; fill one in if the server left it out.
@@ -465,7 +462,7 @@ export async function runHostedHead(cfg: HostedHeadConfig): Promise<HeadResult> 
         const out = await runTool(workspace, call, signal);
         bus.emit({
           type: "tool",
-          head: id,
+          fork: id,
           tool: call.function.name === "edit" ? "edit" : "bash",
           summary: clean(out.summary),
           ok: !out.isError,

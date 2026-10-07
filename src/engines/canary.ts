@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { EventBus, type Stamped } from "../events.js";
 import { appHome, exec } from "../util.js";
-import { claudeSettings, runClaudeCodeHead } from "./claude-code.js";
+import { claudeSettings, runClaudeCodeFork } from "./claude-code.js";
 
 export interface CanaryCheck {
   name: string;
@@ -61,7 +61,7 @@ export async function runCanary(opts: { bin?: string; model?: string } = {}): Pr
   const settings = claudeSettings({ dir, tmp, network: false, extraDeny: [vault] });
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 180_000);
-  const res = await runClaudeCodeHead(
+  const res = await runClaudeCodeFork(
     {
       id: "canary",
       dir,

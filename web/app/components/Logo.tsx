@@ -3,7 +3,7 @@ import { SITE } from "../config";
 import { cx } from "./cx";
 
 /**
- * Pixel mark, 8×8 grid: one process at the root forks into four. Three heads in
+ * Pixel mark, 8×8 grid: one process at the root forks into four. Three forks in
  * currentColor (killed), one in phosphor green (exit 0). Shared with icon.svg and the OG card.
  * "#" = currentColor, "o" = survivor.
  */

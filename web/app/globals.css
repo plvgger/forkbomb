@@ -704,8 +704,8 @@ html.js .replay-frame[data-ready] .replay-frame__poster { opacity: 0; visibility
 /* Run tree: the replay's end state as plain HTML (hero, replay poster). Mirrors the replay's card UI. */
 .run-tree { --rt-indent: 28px; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 30rem; font-family: var(--font-mono); }
 .run-tree__item { position: relative; }
-.run-tree__item--head { margin-left: var(--rt-indent); }
-.run-tree__item--head::before {
+.run-tree__item--fork { margin-left: var(--rt-indent); }
+.run-tree__item--fork::before {
   content: "";
   position: absolute;
   left: calc(var(--rt-indent) * -1 + 13px);
@@ -716,7 +716,7 @@ html.js .replay-frame[data-ready] .replay-frame__poster { opacity: 0; visibility
   border-bottom: 1px solid var(--border-hover);
   border-bottom-left-radius: 8px;
 }
-.run-tree__item--head:not(:last-child)::after {
+.run-tree__item--fork:not(:last-child)::after {
   content: "";
   position: absolute;
   left: calc(var(--rt-indent) * -1 + 13px);
@@ -755,7 +755,7 @@ html.js .replay-frame[data-ready] .replay-frame__poster { opacity: 0; visibility
 .run-tree__item--won .run-tree__score { color: var(--ok); }
 .run-tree--compact { gap: 6px; }
 .run-tree--compact .run-tree__card { padding: 7px 10px; }
-.run-tree--compact .run-tree__item--head::before { top: -6px; height: calc(50% + 6px); }
+.run-tree--compact .run-tree__item--fork::before { top: -6px; height: calc(50% + 6px); }
 
 /* Prose (docs, legal). Prose headings stay in Inter: pixel type is for display, not reading. */
 .prose { max-width: 72ch; color: #d3ccbd; font-size: 1rem; line-height: 1.75; }

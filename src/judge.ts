@@ -4,7 +4,7 @@ import type { Forker } from "./fork/forker.js";
 import { type SandboxSpec, runSandboxed } from "./sandbox.js";
 import { matchesAny, q } from "./util.js";
 
-/** Files a head may not change. Edits are reverted before the suite runs. */
+/** Files a fork may not change. Edits are reverted before the suite runs. */
 export const DEFAULT_PROTECT = [
   "**/*.test.*",
   "**/*.spec.*",
@@ -120,10 +120,10 @@ export interface JudgeConfig {
   testTimeoutMs: number;
   maxOutput: number;
   baselineTotal: number | null;
-  /** The pristine clone every head descends from. Verdicts are rebuilt on top of it. */
+  /** The pristine clone every fork descends from. Verdicts are rebuilt on top of it. */
   bodyDir: string;
   forker: Forker;
-  /** Where to put body + this head's patch. Becomes the parent if this head leads. */
+  /** Where to put body + this fork's patch. Becomes the parent if this fork leads. */
   stateDir: string;
   /** Scratch dir for the patch file and the test run's temp files. */
   tmpDir: string;
@@ -152,16 +152,16 @@ function splitZ(s: string): string[] {
 }
 
 /**
- * Judge one head by what it would ship, not by what its workspace looks like.
+ * Judge one fork by what it would ship, not by what its workspace looks like.
  *
- * 1. Diff the head's clone against the shared base commit, leaving out any
+ * 1. Diff the fork's clone against the shared base commit, leaving out any
  *    protected file (tests, test config) it touched.
  * 2. Fork a fresh copy of the body and apply that patch to it.
  * 3. Run the suite on a throwaway clone of that state.
  *
  * Edits to ignored files (node_modules, build output), planted test files and
  * anything else outside the patch never reach the run that decides the score.
- * Every git call runs sandboxed, because the head's clone is untrusted.
+ * Every git call runs sandboxed, because the fork's clone is untrusted.
  */
 export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortSignal): Promise<Verdict> {
   const base = q(cfg.baseSha);
@@ -187,7 +187,7 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
   await mkdir(cfg.tmpDir, { recursive: true });
   await cfg.forker.fork(cfg.bodyDir, [cfg.stateDir]);
   if (patch.trim()) {
-    const patchFile = join(cfg.tmpDir, "head.patch");
+    const patchFile = join(cfg.tmpDir, "fork.patch");
     await writeFile(patchFile, patch);
     const applied = await runSandboxed(
       `${GIT} apply --whitespace=nowarn ${q(patchFile)}`,

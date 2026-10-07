@@ -11,7 +11,7 @@ import { freshDb, newWorkspace } from "./helpers";
 
 const UPSTREAM = "https://gpu.test.invalid/v1";
 const UPSTREAM_KEY = "upstream-secret-key";
-const UPSTREAM_MODEL = "qwen3-coder-test";
+const UPSTREAM_MODEL = "upstream-model-test";
 const SITE = "https://site.test/api/v1/chat/completions";
 
 let db: Db;
@@ -193,7 +193,7 @@ describe("before the request reaches upstream", () => {
 describe("non-streaming", () => {
   it("forwards a clean request, debits exactly the usage cost and hides the upstream", async () => {
     await fund(1_000_000);
-    const calls = upstream(() => jsonRes(completion({ role: "assistant", content: "Heads fork and race" })));
+    const calls = upstream(() => jsonRes(completion({ role: "assistant", content: "Forks race, one exits 0" })));
     const res = await chatRoute(
       chatReq({ ...hello, temperature: 0.1, user: "u-1", logprobs: true, max_tokens: 2048, stream: false }),
     );
@@ -211,7 +211,7 @@ describe("non-streaming", () => {
     expect(text).not.toContain(UPSTREAM_MODEL);
     const body = JSON.parse(text) as { model: string; choices: { message: { content: string } }[]; usage: unknown };
     expect(body.model).toBe("forkbomb-hosted");
-    expect(body.choices[0]!.message.content).toBe("Heads fork and race");
+    expect(body.choices[0]!.message.content).toBe("Forks race, one exits 0");
     expect(body.usage).toMatchObject({ prompt_tokens: 1000, completion_tokens: 500 });
 
     expect(calls).toHaveLength(1);
@@ -243,7 +243,7 @@ describe("non-streaming", () => {
       },
     ];
     const messages = [
-      { role: "system", content: "You are a head." },
+      { role: "system", content: "You are a fork." },
       { role: "user", content: "Fix the bug." },
       { role: "assistant", content: null, tool_calls: [{ id: "call_0", type: "function", function: { name: "run_tests", arguments: "{\"filter\":\"all\"}" } }] },
       { role: "tool", tool_call_id: "call_0", content: "2 failed" },
@@ -433,8 +433,8 @@ describe("streaming", () => {
 
   it("streams tool call deltas intact", async () => {
     await fund(1_000_000);
-    const tc = (args: string, head = false) =>
-      chunk({ tool_calls: [{ index: 0, ...(head ? { id: "call_9", type: "function", function: { name: "edit_file", arguments: args } } : { function: { arguments: args } }) }] });
+    const tc = (args: string, first = false) =>
+      chunk({ tool_calls: [{ index: 0, ...(first ? { id: "call_9", type: "function", function: { name: "edit_file", arguments: args } } : { function: { arguments: args } }) }] });
     upstream(({ signal }) => sse([tc("", true), tc('{"path":'), tc('"a.ts"}'), usageChunk(50, 9), "data: [DONE]\n\n"], signal));
     const res = await send(chatReq({ ...hello, stream: true, tools: [{ type: "function", function: { name: "edit_file", parameters: {} } }] }));
     const deltas = dataOf(await res.text()).map((d) => d.choices[0]!.delta as { tool_calls: { function: { arguments: string; name?: string }; id?: string }[] });

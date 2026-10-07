@@ -44,9 +44,9 @@ mkdirSync(join(runsDir, runId), { recursive: true });
 const bus = new EventBus(join(runsDir, runId, "events.jsonl"));
 const res = await runRace(
   {
-    runId, repo, task: "Fix math.js so the test suite passes", testCmd: "node --test", heads: 8, rounds: 2, mode: "race", model,
-    effort: "medium", maxTurns: 12, headTimeoutMs: 60_000, bashTimeoutMs: 20_000, testTimeoutMs: 30_000, maxOutput: 10_000,
-    network: false, sandbox: true, protect: DEFAULT_PROTECT, apply: false, keepHeads: false, runsDir, concurrency: 8,
+    runId, repo, task: "Fix math.js so the test suite passes", testCmd: "node --test", forks: 8, rounds: 2, mode: "race", model,
+    effort: "medium", maxTurns: 12, forkTimeoutMs: 60_000, bashTimeoutMs: 20_000, testTimeoutMs: 30_000, maxOutput: 10_000,
+    network: false, sandbox: true, protect: DEFAULT_PROTECT, apply: false, keepForks: false, runsDir, concurrency: 8,
   },
   bus,
 );

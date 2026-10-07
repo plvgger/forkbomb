@@ -7,8 +7,8 @@ import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { AnthropicModel, type Effort } from "./agent.js";
 import { bench, benchTable } from "./bench.js";
-import { BRAND, HOME_ENV, HOSTED_KEY_ENV, HOSTED_URL_ENV, legacyEnvInUse } from "./brand.js";
-import { EventBus, type Stamped } from "./events.js";
+import { BRAND, HOME_ENV, HOSTED_KEY_ENV, HOSTED_URL_ENV } from "./brand.js";
+import { EventBus, type Stamped, parseEventLog } from "./events.js";
 import { type CanaryResult, cachedCanaryPass, runCanary } from "./engines/canary.js";
 import { HostedClient, formatCredits, hostedSettings } from "./engines/hosted.js";
 import { canClone } from "./fork/forker.js";
@@ -16,7 +16,7 @@ import { DEFAULT_PROTECT } from "./judge.js";
 import { runRace } from "./orchestrator.js";
 import { runSandboxed } from "./sandbox.js";
 import { serve } from "./server.js";
-import { PKG_ROOT, appHome, exec, fmtBytes, resolveHome } from "./util.js";
+import { PKG_ROOT, appHome, exec, fmtBytes } from "./util.js";
 
 const CLI = BRAND.slug;
 const HOME = `~/.${BRAND.slug}`;
@@ -25,12 +25,13 @@ const HELP = `${CLI}: fork a coding agent into N sandboxed copies of your repo. 
 
 Usage
   ${CLI} run [repo] --task "..." --test "npm test" [options]
-  ${CLI} bench [dir] [--forks 16] [--no-copy]
+  ${CLI} bench [dir] [--forks 16] [--no-copy] [--json]
   ${CLI} replay <run-dir | events.jsonl> [--port 4317] [--no-open]
   ${CLI} export <run-dir> <out-dir>
   ${CLI} doctor
-  ${CLI} credits       show hosted credit balance and pricing (--json)
-  ${CLI} canary        prove Claude Code forks can't escape (runs a tiny session)
+  ${CLI} credits [--json]   hosted credit balance and pricing
+  ${CLI} canary [--claude-bin PATH] [--model ID]
+                            prove Claude Code forks can't escape (runs a tiny session)
 
 run options
   --forks N           forks per round (default 8)
@@ -45,6 +46,7 @@ run options
   --model ID          model for the forks (api default: claude-opus-5-5;
                       claude-code default: your Claude Code default)
   --effort LEVEL      low | medium | high | xhigh | max (default medium)
+  --claude-bin PATH   Claude Code binary for --engine claude-code (default: claude on PATH)
   --max-turns N       tool-use turns per fork (default 30)
   --fork-timeout S    seconds per fork (default 600)
   --bash-timeout S    seconds per shell command (default 120)
@@ -69,8 +71,7 @@ ${HOME}/.env (get a key and top up at ${BRAND.site}/app; ${HOSTED_URL_ENV}
 overrides the gateway, default ${BRAND.site}/api/v1). Keys stay on your machine:
 the Anthropic key goes only to Anthropic, the hosted key only to the hosted
 gateway, and no key ever reaches a fork. Self-hosting stays free.
-${HOME_ENV} moves ${HOME}. The old --heads, --head-timeout and --keep-heads flags
-and HYDRA_* env names still work.`;
+${HOME_ENV} moves ${HOME}.`;
 
 /** Fill unset env vars from <home>/.env. Skips the read when every wanted var is already set. */
 function loadEnvFile(...want: string[]): void {
@@ -101,45 +102,45 @@ function runId(): string {
 /** The repo copy every fork descends from is "body" in events; people see it as pid 1. */
 const pid = (id: string) => (id === "body" ? "pid 1" : id);
 
-/** Compact terminal narration of a run. Event types and fields keep their original names for replay. */
+/** Compact terminal narration of a run. */
 function narrate(e: Stamped, verbose: boolean): void {
   const t = `${(e.t / 1000).toFixed(1).padStart(6)}s`;
   const say = (s: string) => console.log(`${t}  ${s}`);
   switch (e.type) {
     case "run_start":
-      say(`run ${e.runId}: ${e.heads} forks × ${e.rounds} rounds · ${e.model} (${e.effort}) · ${e.mode} · sandbox ${e.sandbox ? "on" : "OFF"}${e.engine === "claude-code" ? " · on your Claude subscription" : e.engine === "hosted" ? " · on hosted credit" : ""}`);
+      say(`run ${e.runId}: ${e.forks} forks × ${e.rounds} rounds · ${e.model} (${e.effort}) · ${e.mode} · sandbox ${e.sandbox ? "on" : "OFF"}${e.engine === "claude-code" ? " · on your Claude subscription" : e.engine === "hosted" ? " · on hosted credit" : ""}`);
       break;
     case "baseline":
       say(`baseline: ${e.passed ?? "?"} passing, ${e.failed ?? "?"} failing (exit ${e.exitCode})`);
       break;
     case "fork": {
       const avg = e.msEach.reduce((a, b) => a + b, 0) / Math.max(1, e.msEach.length);
-      say(`fork  ${e.heads.length} × ${pid(e.parent)} in ${avg.toFixed(2)} ms each via ${e.forker} · ${fmtBytes(e.logicalBytes)} logical, ${fmtBytes(e.physicalBytes ?? 0)} physical`);
+      say(`fork  ${e.forks.length} × ${pid(e.parent)} in ${avg.toFixed(2)} ms each via ${e.forker} · ${fmtBytes(e.logicalBytes)} logical, ${fmtBytes(e.physicalBytes ?? 0)} physical`);
       break;
     }
-    case "head_start":
-      if (verbose) say(`  ${e.head} ${e.strategy}`);
+    case "fork_start":
+      if (verbose) say(`  ${e.fork} ${e.strategy}`);
       break;
     case "tool":
-      if (verbose) say(`  ${e.head} ${e.tool === "bash" ? "$" : "✎"} ${e.summary}`);
+      if (verbose) say(`  ${e.fork} ${e.tool === "bash" ? "$" : "✎"} ${e.summary}`);
       break;
-    case "head_done":
-      if (e.reason !== "severed") say(`  ${e.head} done: ${e.reason} after ${e.turns} turns${e.costUsd != null ? ` · $${e.costUsd.toFixed(3)}` : ""}${e.error ? ` · ${e.error}` : ""}`);
+    case "fork_done":
+      if (e.reason !== "killed") say(`  ${e.fork} done: ${e.reason} after ${e.turns} turns${e.costUsd != null ? ` · $${e.costUsd.toFixed(3)}` : ""}${e.error ? ` · ${e.error}` : ""}`);
       break;
     case "judge": {
       const total = e.passed != null && e.failed != null ? e.passed + e.failed : null;
       const mark = e.score === 1 ? "PASS" : "fail";
-      say(`  ${e.head} ${mark} ${total != null ? `${e.passed}/${total}` : `${Math.round(e.score * 100)}%`} · ${e.diffLines} lines${e.tampered.length ? ` · reverted test edits: ${e.tampered.join(", ")}` : ""}`);
+      say(`  ${e.fork} ${mark} ${total != null ? `${e.passed}/${total}` : `${Math.round(e.score * 100)}%`} · ${e.diffLines} lines${e.tampered.length ? ` · reverted test edits: ${e.tampered.join(", ")}` : ""}`);
       break;
     }
-    case "sever":
-      say(`  ${e.head} killed (${e.why})`);
+    case "kill":
+      say(`  ${e.fork} killed (${e.why})`);
       break;
     case "round_end":
       say(`round ${e.round}: best ${e.best ?? "none"} at ${Math.round(e.bestScore * 100)}%`);
       break;
     case "winner":
-      say(`EXIT 0 ${e.head}: ${e.diffLines} lines in ${e.filesChanged} file(s). ${e.summary.split("\n")[0] ?? ""}`);
+      say(`EXIT 0 ${e.fork}: ${e.diffLines} lines in ${e.filesChanged} file${e.filesChanged === 1 ? "" : "s"}. ${e.summary.split("\n")[0] ?? ""}`);
       break;
     case "run_end":
       say(`done in ${(e.ms / 1000).toFixed(1)}s${e.costUsd != null ? ` · $${e.costUsd.toFixed(2)}` : ""}${e.patchPath ? ` · patch: ${e.patchPath}` : ""}${e.applied ? " · applied" : ""}`);
@@ -157,8 +158,7 @@ async function cmdRun(argv: string[]): Promise<void> {
     options: {
       task: { type: "string" },
       test: { type: "string" },
-      forks: { type: "string" },
-      heads: { type: "string" }, // pre-rename name of --forks
+      forks: { type: "string", default: "8" },
       rounds: { type: "string", default: "2" },
       mode: { type: "string", default: "race" },
       engine: { type: "string", default: "claude-code" },
@@ -166,8 +166,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       "claude-bin": { type: "string" },
       effort: { type: "string", default: "medium" },
       "max-turns": { type: "string", default: "30" },
-      "fork-timeout": { type: "string" },
-      "head-timeout": { type: "string" }, // pre-rename name of --fork-timeout
+      "fork-timeout": { type: "string", default: "600" },
       "bash-timeout": { type: "string", default: "120" },
       "test-timeout": { type: "string", default: "300" },
       concurrency: { type: "string", default: "8" },
@@ -175,7 +174,6 @@ async function cmdRun(argv: string[]): Promise<void> {
       "no-default-protect": { type: "boolean", default: false },
       apply: { type: "boolean", default: false },
       "keep-forks": { type: "boolean", default: false },
-      "keep-heads": { type: "boolean", default: false }, // pre-rename name of --keep-forks
       network: { type: "boolean", default: false },
       "no-sandbox": { type: "boolean", default: false },
       ui: { type: "boolean", default: false },
@@ -194,7 +192,7 @@ async function cmdRun(argv: string[]): Promise<void> {
     if (!Number.isFinite(n) || n < min || n > max) fail(`--${k} must be between ${min} and ${max}`);
     return n;
   };
-  const heads = int("forks", values.forks ?? values.heads ?? "8", 1, 64);
+  const forks = int("forks", values.forks, 1, 64);
   const rounds = int("rounds", values.rounds, 1, 10);
   const mode = values.mode === "best" ? "best" : values.mode === "race" ? "race" : fail("--mode must be race or best");
   const efforts = ["low", "medium", "high", "xhigh", "max"];
@@ -257,7 +255,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       repo,
       task: values.task,
       testCmd: values.test,
-      heads,
+      forks,
       rounds,
       mode,
       ...(engine === "api"
@@ -267,7 +265,7 @@ async function cmdRun(argv: string[]): Promise<void> {
           : { claudeCode: { model: values.model, bin: values["claude-bin"] } }),
       effort: values.effort!,
       maxTurns: int("max-turns", values["max-turns"], 1, 500),
-      headTimeoutMs: int("fork-timeout", values["fork-timeout"] ?? values["head-timeout"] ?? "600", 10, 86_400) * 1000,
+      forkTimeoutMs: int("fork-timeout", values["fork-timeout"], 10, 86_400) * 1000,
       bashTimeoutMs: int("bash-timeout", values["bash-timeout"], 1, 3600) * 1000,
       testTimeoutMs: int("test-timeout", values["test-timeout"], 1, 7200) * 1000,
       maxOutput: 12_000,
@@ -275,7 +273,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       sandbox: !values["no-sandbox"],
       protect: [...(values["no-default-protect"] ? [] : DEFAULT_PROTECT), ...(values.protect ?? [])],
       apply: values.apply!,
-      keepHeads: values["keep-forks"]! || values["keep-heads"]!,
+      keepForks: values["keep-forks"]!,
       runsDir,
       concurrency: int("concurrency", values.concurrency, 1, 64),
     },
@@ -291,12 +289,14 @@ async function cmdRun(argv: string[]): Promise<void> {
   } else process.exit(result?.ok ? 0 : 1);
 }
 
+/** A run's events, checked line by line; exits with the first problem rather than replaying part of a run. */
 async function loadEvents(target: string): Promise<Stamped[]> {
   const file = (await stat(target)).isDirectory() ? join(target, "events.jsonl") : target;
-  return (await readFile(file, "utf8"))
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l) as Stamped);
+  try {
+    return parseEventLog(await readFile(file, "utf8"));
+  } catch (e) {
+    fail(`can't read ${file}: ${(e as Error).message}`);
+  }
 }
 
 async function cmdReplay(argv: string[]): Promise<void> {
@@ -320,7 +320,7 @@ async function cmdExport(argv: string[]): Promise<void> {
   const dir = resolve(out);
   await mkdir(dir, { recursive: true });
   for (const f of ["index.html", "app.js", "style.css"]) await copyFile(join(PKG_ROOT, "ui", f), join(dir, f));
-  await writeFile(join(dir, "data.js"), `window.HYDRA_EVENTS = ${JSON.stringify(events)};\n`);
+  await writeFile(join(dir, "data.js"), `window.FORKBOMB_EVENTS = ${JSON.stringify(events)};\n`);
   await writeFile(join(dir, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n") + "\n");
   console.log(`${CLI}: exported ${events.length} events from ${basename(resolve(src))} to ${dir}`);
 }
@@ -330,15 +330,14 @@ async function cmdBench(argv: string[]): Promise<void> {
     args: argv,
     allowPositionals: true,
     options: {
-      forks: { type: "string" },
-      heads: { type: "string" }, // pre-rename name of --forks
+      forks: { type: "string", default: "16" },
       "no-copy": { type: "boolean", default: false },
       json: { type: "boolean", default: false },
     },
   });
   const src = resolve(positionals[0] ?? ".");
-  const heads = Number.parseInt(values.forks ?? values.heads ?? "16", 10);
-  const rows = await bench(src, heads, !values["no-copy"]);
+  const forks = Number.parseInt(values.forks!, 10);
+  const rows = await bench(src, forks, !values["no-copy"]);
   if (values.json) console.log(JSON.stringify(rows, null, 2));
   else console.log(`${benchTable(rows)}\n\nworkspace: ${src}`);
 }
@@ -383,11 +382,7 @@ async function cmdDoctor(): Promise<void> {
   check(process.platform === "darwin", "macOS", "the sandbox and clonefile need macOS");
   const major = Number(process.versions.node.split(".")[0]);
   check(major >= 22, `Node ${process.versions.node}`, "needs Node 22+");
-  const home = resolveHome();
-  if (home.legacy) console.log(`info  ${home.legacy}`);
-  const oldEnv = legacyEnvInUse();
-  if (oldEnv.length) console.log(`info  deprecated env names still read, please rename: ${oldEnv.join(", ")}`);
-  await mkdir(home.dir, { recursive: true });
+  await mkdir(appHome(), { recursive: true });
   check(await canClone(appHome(), appHome()), "APFS copy-on-write clones", `${appHome()} is not on APFS; ${BRAND.name} will fall back to plain copies`);
   const cc = await exec("/usr/bin/clang", ["--version"]).catch(() => ({ code: 1, stdout: "", stderr: "" }));
   check(cc.code === 0, "clang (builds the clone helper)", "run: xcode-select --install");

@@ -5,16 +5,16 @@ import { appHome, fmtBytes, freeBytes, treeBytes } from "./util.js";
 
 export interface BenchRow {
   forker: string;
-  heads: number;
+  forks: number;
   msTotal: number;
-  msPerHead: number;
+  msPerFork: number;
   logicalBytes: number;
   physicalBytes: number;
 }
 
-async function measure(forker: Forker, src: string, heads: number, scratch: string): Promise<BenchRow> {
+async function measure(forker: Forker, src: string, forks: number, scratch: string): Promise<BenchRow> {
   const dir = await mkdtemp(join(scratch, `${forker.name}-`));
-  const dsts = Array.from({ length: heads }, (_, i) => join(dir, `h${i}`));
+  const dsts = Array.from({ length: forks }, (_, i) => join(dir, `f${i}`));
   const workspace = await treeBytes(src);
   const free0 = await freeBytes(scratch);
   const t0 = performance.now();
@@ -24,21 +24,21 @@ async function measure(forker: Forker, src: string, heads: number, scratch: stri
   await rm(dir, { recursive: true, force: true });
   return {
     forker: forker.name,
-    heads,
+    forks,
     msTotal,
-    msPerHead: msTotal / heads,
-    logicalBytes: workspace * heads,
+    msPerFork: msTotal / forks,
+    logicalBytes: workspace * forks,
     physicalBytes: Math.max(0, free0 - free1),
   };
 }
 
 /** Fork the same workspace with clonefile and with a plain copy, and report both honestly. */
-export async function bench(src: string, heads: number, withCopy: boolean): Promise<BenchRow[]> {
+export async function bench(src: string, forks: number, withCopy: boolean): Promise<BenchRow[]> {
   const scratch = join(appHome(), "bench");
   await mkdir(scratch, { recursive: true });
   const rows: BenchRow[] = [];
-  if (await canClone(src, scratch)) rows.push(await measure(await ApfsForker.create(), src, heads, scratch));
-  if (withCopy) rows.push(await measure(new CopyForker(), src, heads, scratch));
+  if (await canClone(src, scratch)) rows.push(await measure(await ApfsForker.create(), src, forks, scratch));
+  if (withCopy) rows.push(await measure(new CopyForker(), src, forks, scratch));
   return rows;
 }
 
@@ -46,9 +46,9 @@ export function benchTable(rows: BenchRow[]): string {
   const head = ["forker", "forks", "total", "per fork", "logical", "physical"];
   const body = rows.map((r) => [
     r.forker,
-    String(r.heads),
+    String(r.forks),
     `${r.msTotal.toFixed(1)} ms`,
-    `${r.msPerHead.toFixed(2)} ms`,
+    `${r.msPerFork.toFixed(2)} ms`,
     fmtBytes(r.logicalBytes),
     fmtBytes(r.physicalBytes),
   ]);

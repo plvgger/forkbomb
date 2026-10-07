@@ -1,40 +1,19 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BRAND, HOME_ENV, LEGACY_ENV, LEGACY_SLUG } from "./brand.js";
+import { BRAND, HOME_ENV } from "./brand.js";
 
 export const PKG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-export interface HomeDir {
-  dir: string;
-  /** Set when the dir came from a pre-rename name: what to move or rename. */
-  legacy: string | null;
-}
-
-/**
- * Where runs, the clone helper, the canary record and the .env file live:
- * <SLUG>_HOME, then the pre-rename env name, then ~/.<slug>. An existing
- * ~/.<legacy> is used only while ~/.<slug> doesn't exist yet.
- */
-export function resolveHome(env: NodeJS.ProcessEnv = process.env, home = homedir()): HomeDir {
-  const set = env[HOME_ENV]?.trim();
-  if (set) return { dir: set, legacy: null };
-  const oldEnv = LEGACY_ENV[HOME_ENV]!;
-  const old = env[oldEnv]?.trim();
-  if (old) return { dir: old, legacy: `${oldEnv} is deprecated; rename it to ${HOME_ENV}` };
-  const dir = join(home, `.${BRAND.slug}`);
-  const legacyDir = join(home, `.${LEGACY_SLUG}`);
-  if (!existsSync(dir) && existsSync(legacyDir)) {
-    return { dir: legacyDir, legacy: `using legacy ~/.${LEGACY_SLUG}; move it to ~/.${BRAND.slug}` };
-  }
-  return { dir, legacy: null };
+/** Where runs, the clone helper, the canary record and the .env file live: <SLUG>_HOME, else ~/.<slug>. */
+export function resolveHome(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  return env[HOME_ENV]?.trim() || join(home, `.${BRAND.slug}`);
 }
 
 export function appHome(): string {
-  return resolveHome().dir;
+  return resolveHome();
 }
 
 /** Single-quote a string for /bin/sh. */
@@ -126,7 +105,7 @@ export function matchesAny(path: string, globs: RegExp[]): boolean {
   return globs.some((g) => g.test(path));
 }
 
-/** Small counting semaphore so N heads don't all hit the API at once. */
+/** Small counting semaphore so N forks don't all hit the API at once. */
 export class Semaphore {
   private queue: Array<() => void> = [];
   constructor(private slots: number) {}

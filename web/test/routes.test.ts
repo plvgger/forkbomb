@@ -62,7 +62,7 @@ describe("POST /api/workspaces", () => {
 
 describe("GET /api/v1/me", () => {
   it("returns workspace, balance and pricing for a valid key, 401 otherwise", async () => {
-    vi.stubEnv("UPSTREAM_MODEL", "Qwen/Qwen3-Coder-30B-A3B-Instruct-private"); // never leaves the server
+    vi.stubEnv("UPSTREAM_MODEL", "upstream-model-test"); // never leaves the server
     const created = (await (await createRoute(post("/api/workspaces", { label: "a" }))).json()) as {
       workspace: { id: string };
       apiKey: string;
@@ -71,11 +71,13 @@ describe("GET /api/v1/me", () => {
     const res = await meRoute(get("/api/v1/me", { authorization: `Bearer ${created.apiKey}` }));
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(await res.json()).toMatchObject({
+    const me = await res.json();
+    expect(me).toMatchObject({
       workspace: { id: created.workspace.id, label: "a" },
       credits: { balanceMicroUsd: 2_500_000, balanceUsd: 2.5 },
       pricing: { inputPerMTokUsd: 0.6, outputPerMTokUsd: 2.4, model: "forkbomb-hosted" },
     });
+    expect(JSON.stringify(me)).not.toContain("upstream-model-test");
     const bad = await meRoute(get("/api/v1/me", { authorization: "Bearer forkbomb_sk_00000000000000000000000000000000" }));
     expect(bad.status).toBe(401);
     expect(await bad.json()).toEqual({

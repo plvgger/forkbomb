@@ -20,7 +20,6 @@ import {
 import {
   APP_URL,
   BENCH,
-  CLI_LEGACY_HOME,
   GITHUB_URL,
   INSTALL_SCRIPT,
   ISSUES_URL,
@@ -258,10 +257,7 @@ export default function DocsPage() {
                   <code className="inline-code">npm link</code> in the repo folder to put{" "}
                   <code className="inline-code">{BIN}</code> on your PATH, or run{" "}
                   <code className="inline-code">node dist/cli.js &lt;cmd&gt;</code> from the repo folder without
-                  linking. Installs from before the rename kept their files in{" "}
-                  <code className="inline-code">{CLI_LEGACY_HOME}</code>; the CLI still reads it until{" "}
-                  <code className="inline-code">{HOME}</code> exists, and those builds print{" "}
-                  <code className="inline-code">hydra:</code> in their messages.
+                  linking.
                 </p>
               </Callout>
               <H3 id="install-credentials">Credentials</H3>
@@ -342,7 +338,7 @@ export default function DocsPage() {
                 A real run from {RUN.date}: {RUN.engine}, on the {RUN.repo}. The baseline had {RUN.baseline.passing} of{" "}
                 {RUN.baseline.total} tests passing. Four forks were made in {RUN.forkMsEach} ms each. Fork{" "}
                 {RUN.winner.id} ({RUN.winner.strategy}) passed {RUN.winner.passed}/{RUN.winner.total} first, the other{" "}
-                {RUN.severed} were killed, and the whole race took {RUN.durationS} s.
+                {RUN.killed} were killed, and the whole race took {RUN.durationS} s.
               </p>
               <Terminal
                 title={`${BIN} run · ${RUN.id}`}
@@ -394,16 +390,16 @@ export default function DocsPage() {
                 fork writes, so forking costs metadata, not bytes. Off APFS, Forkbomb falls back to a plain copy.
               </p>
               <RefTable
-                caption={`${BIN} bench on a ${BENCH.machine}, ${BENCH.workload}, ${BENCH.heads} forks`}
+                caption={`${BIN} bench on a ${BENCH.machine}, ${BENCH.workload}, ${BENCH.forks} forks`}
                 head={["Forker", "Per fork", "Extra disk"]}
                 mono={[0, 1, 2]}
                 rows={[
-                  ["apfs-clonefile", `${BENCH.clonefile.perHeadMs} ms`, BENCH.clonefile.extraDisk],
-                  ["copy", `${BENCH.copy.perHeadMs.toLocaleString("en-US")} ms`, BENCH.copy.extraDisk],
+                  ["apfs-clonefile", `${BENCH.clonefile.perForkMs} ms`, BENCH.clonefile.extraDisk],
+                  ["copy", `${BENCH.copy.perForkMs.toLocaleString("en-US")} ms`, BENCH.copy.extraDisk],
                 ]}
               />
               <p className={s.note}>
-                {BIN} bench · {BENCH.machine} · {BENCH.workload} · {BENCH.heads} forks. {BENCH.speedup} faster,{" "}
+                {BIN} bench · {BENCH.machine} · {BENCH.workload} · {BENCH.forks} forks. {BENCH.speedup} faster,{" "}
                 {BENCH.diskSaving} less disk. Run <code>{BIN} bench ./my-repo</code> to measure your own.
               </p>
 
@@ -450,8 +446,9 @@ export default function DocsPage() {
 
               <H3 id="phase-refork">5. Re-fork</H3>
               <p>
-                If nobody passes, the best fork&apos;s verified state (pid 1 plus its patch) becomes the parent of the
-                next round, with a note on where it left off. <code>--rounds</code> caps how many times this happens. If
+                If nobody passes and the round&apos;s best fork beat its parent, that fork&apos;s verified state (pid 1
+                plus its patch) becomes the parent of the next round, with a note on where it left off. Otherwise the
+                next round forks the same parent again. <code>--rounds</code> caps how many rounds run. If
                 the last round still has no pass, Forkbomb saves the best partial patch as <code>best.patch</code>.
               </p>
             </DocSection>
@@ -847,7 +844,7 @@ export default function DocsPage() {
               lede={
                 <>
                   Every run is saved under <code>{HOME}/runs/&lt;id&gt;/</code>, named by start time. Nothing is
-                  uploaded. (The folder keeps its pre-rename name.)
+                  uploaded.
                 </>
               }
             >
@@ -863,7 +860,7 @@ export default function DocsPage() {
                   ["      events.jsonl", "every event in order; replay and export read it"],
                   ["      winner.patch", "the passing fork's diff (best.patch if none passed)"],
                   ["      body/", "pid 1: clean clone of your repo plus the base snapshot"],
-                  ["      heads/<id>/", "the final fork's clone; killed forks are deleted"],
+                  ["      forks/<id>/", "the final fork's clone; killed forks are deleted"],
                   ["      state/<id>/", "pid 1 plus the final patch, verified by the judge"],
                 ])}
                 ariaLabel="Run folder layout"
@@ -894,8 +891,7 @@ export default function DocsPage() {
               <H3 id="artifacts-events">events.jsonl</H3>
               <p>
                 One JSON object per line, each stamped with the time since the run started. The live view, replay and
-                export all read this file. Event names predate the rename: a fork is a <code>head</code>, a kill is a{" "}
-                <code>sever</code>.
+                export all read this file.
               </p>
               <RefTable
                 caption="Event types in events.jsonl"
@@ -1328,7 +1324,7 @@ export default function DocsPage() {
               id="troubleshooting"
               index={next()}
               title="Troubleshooting"
-              lede="Each entry starts with the line the CLI prints. Values in angle brackets come from your run. Pre-rename builds print hydra: where these say forkbomb:."
+              lede="Each entry starts with the line the CLI prints. Values in angle brackets come from your run."
             >
               <div className={s.issues}>
                 <Issue
@@ -1367,7 +1363,7 @@ export default function DocsPage() {
                 <Issue
                   id="ts-already-passes"
                   title="Tests already pass"
-                  msg="warn: The test suite already passes. Nothing for the heads to do."
+                  msg="warn: The test suite already passes. Nothing for the forks to do."
                 >
                   <p>
                     The baseline passed, so no forks were made. Check that <code>--test</code> runs the tests that
@@ -1377,7 +1373,7 @@ export default function DocsPage() {
                 <Issue
                   id="ts-no-pass"
                   title="No fork passed"
-                  msg="warn: No head passed the whole suite. Best was <head> (<strategy>) at <score>%."
+                  msg="warn: No fork passed the whole suite. Best was <fork> (<strategy>) at <score>%."
                 >
                   <p>
                     Nobody exited 0. The best partial patch is saved as <code>best.patch</code>. Sharpen the task, add

@@ -35,7 +35,7 @@ function Node({ title, children, mono }: { title: string; children?: ReactNode; 
 export function TrustBoundary() {
   return (
     <figure className={s.boundary} aria-labelledby="boundary-cap">
-      <div className={`${s.zone} ${s.zoneHead}`}>
+      <div className={`${s.zone} ${s.zoneFork}`}>
         <p className={s.zoneLabel}>
           <span className={s.zoneKey} aria-hidden="true" />
           Untrusted · inside the sandbox
@@ -57,7 +57,7 @@ export function TrustBoundary() {
         <span className={s.connLabel}>patch only</span>
       </div>
 
-      <div className={`${s.zone} ${s.zoneHydra}`}>
+      <div className={`${s.zone} ${s.zoneOrchestrator}`}>
         <p className={s.zoneLabel}>
           <span className={s.zoneKey} aria-hidden="true" />
           Trusted · Forkbomb process

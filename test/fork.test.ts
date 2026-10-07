@@ -6,7 +6,7 @@ import { ApfsForker, CopyForker, canClone } from "../src/fork/forker.js";
 import { tempDir, writeTree } from "./helpers.js";
 
 describe("forkers", () => {
-  it("clones a tree with clonefile, and heads are independent", async () => {
+  it("clones a tree with clonefile, and forks are independent", async () => {
     const src = tempDir("src");
     writeTree(src, { "a.txt": "A", "deep/b.txt": "B" });
     const out = tempDir("out");

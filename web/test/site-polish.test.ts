@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { DEPTH, EXITED, FORKS, KILLED, NODES, OUTER0, lineageOf } from "../app/components/forkTree";
-import { APP_URL, CLI_HOME, CLI_PROBE, NAV_CTA, RUN_TRANSCRIPT, STATUS, TOKEN_MEMO_PREFIX } from "../app/config";
-import { BENCH_FLAGS, RUN_FLAGS } from "../app/docs/_parts/content";
+import { APP_URL, CLI_HOME, CLI_PROBE, NAV_CTA, RUN, RUN_TRANSCRIPT, STATUS, TOKEN_MEMO_PREFIX } from "../app/config";
+import { BENCH_FLAGS, EVENTS, RUN_FLAGS } from "../app/docs/_parts/content";
 import { BRAND } from "../lib/server/config";
 
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
@@ -88,11 +88,47 @@ describe("standalone /replay page", () => {
     expect(html).toContain('class="sitefoot"');
   });
 
-  it("serves recorded run data with no home-directory paths or the pre-rename CLI name", () => {
-    for (const f of ["events.jsonl", "data.js", "terminal.log"]) {
-      const text = read(`public/replay/${f}`);
-      expect(text, f).not.toMatch(/\/Users\/|\/home\/|\.hydra\b|^hydra:/m);
+  it("serves recorded run data with no home-directory paths", () => {
+    for (const f of ["events.jsonl", "data.js"]) expect(read(`public/replay/${f}`), f).not.toMatch(/\/Users\/|\/home\//);
+  });
+
+  it("ships the recorded run in the current event schema", () => {
+    const fromJsonl = read("public/replay/events.jsonl")
+      .trimEnd()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    const data = read("public/replay/data.js");
+    const prefix = "window.FORKBOMB_EVENTS = ";
+    expect(data.startsWith(prefix)).toBe(true);
+    const fromData = JSON.parse(data.slice(prefix.length).replace(/;\s*$/, "")) as Record<string, unknown>[];
+    expect(fromData).toEqual(fromJsonl);
+
+    const documented = new Set(EVENTS.map((e) => e.type));
+    const perFork = new Set(["fork_start", "tool", "note", "fork_done", "judging", "judge", "kill", "winner"]);
+    for (const e of fromData) {
+      const type = String(e.type);
+      expect(documented.has(type), `undocumented event type ${type}`).toBe(true);
+      expect(Object.keys(e), type).not.toContain("head");
+      expect(Object.keys(e), type).not.toContain("heads");
+      if (perFork.has(type)) expect(typeof e.fork, type).toBe("string");
     }
+    const start = fromData.find((e) => e.type === "run_start");
+    const fork = fromData.find((e) => e.type === "fork");
+    expect(start?.forks).toBe(RUN.forks.length);
+    expect(fork?.forks).toEqual(RUN.forks.map((f) => f.id));
+    const kills = fromData.filter((e) => e.type === "kill");
+    expect(kills).toHaveLength(RUN.killed);
+    const winner = fromData.find((e) => e.type === "winner");
+    expect(winner?.fork).toBe(RUN.winner.id);
+    const done = fromData.filter((e) => e.type === "fork_done").map((e) => e.reason);
+    expect(done.filter((r) => r === "killed")).toHaveLength(RUN.killed);
+  });
+
+  it("replay script and host page agree on the globals and the ready message", () => {
+    const app = read("public/replay/app.js");
+    expect(app).toContain("window.FORKBOMB_EVENTS");
+    expect(app).toContain('"forkbomb:replay-ready"');
+    expect(read("app/components/ReplayReady.tsx")).toContain('"forkbomb:replay-ready"');
   });
 
   it("stays chromeless in embed mode", () => {
@@ -100,7 +136,7 @@ describe("standalone /replay page", () => {
   });
 
   it("keeps every element the replay script writes to", () => {
-    for (const id of ["status", "elapsed", "cost", "model", "task", "testCmd", "baseline", "tree", "wires", "log", "replayBar"]) {
+    for (const id of ["status", "elapsed", "cost", "costUnit", "model", "task", "testCmd", "baseline", "tree", "wires", "log", "replayBar"]) {
       expect(html).toContain(`id="${id}"`);
     }
   });
@@ -127,8 +163,13 @@ describe("site matches the CLI", () => {
     expect(names.length).toBeGreaterThan(20);
     for (const name of names) {
       expect(cli, `--${name}`).toMatch(new RegExp(`(^|\\s)"?${name}"?: \\{ type:`, "m"));
-      expect(name, `--${name} is a pre-rename alias`).not.toMatch(/head/);
     }
     expect(RUN_TRANSCRIPT[0]!.text).toContain("--forks 4");
+  });
+
+  it("documents every event type the CLI writes, and no others", () => {
+    const types = [...readCli("src/events.ts").matchAll(/type: "([a-z_]+)"/g)].map((m) => m[1]);
+    expect(types.length).toBeGreaterThan(10);
+    expect(EVENTS.map((e) => e.type).sort()).toEqual([...new Set(types)].sort());
   });
 });

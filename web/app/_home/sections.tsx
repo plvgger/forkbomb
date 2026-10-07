@@ -80,7 +80,7 @@ function Head({
 export function Hero() {
   const facts: { k: string; v: ReactNode }[] = [
     { k: "fork()", v: <>{RUN.forkMsEach} ms</> },
-    { k: "forks", v: <>{RUN.heads.length} → 1</> },
+    { k: "forks", v: <>{RUN.forks.length} → 1</> },
     { k: "race", v: <>{RUN.durationS} s</> },
     { k: "vs copy", v: <>{BENCH.speedup}</> },
     { k: "tests", v: <>{TEST_COUNT}</> },
@@ -109,7 +109,7 @@ export function Hero() {
 
         <p className={s.heroLede}>
           {SITE.name} clones your repo into sandboxed forks in milliseconds and gives each one a different strategy.
-          Your test suite judges every patch: the losers get <code>kill -9</code>, the survivor&apos;s patch is yours.
+          Your test suite judges every patch: the losers get <code>kill -9</code>, the winning patch is yours.
         </p>
 
         <div className={s.heroVisual}>
@@ -174,7 +174,7 @@ export function RunSection() {
   const foot: { k: string; v: ReactNode; tone?: "ok" | "signal" }[] = [
     { k: "baseline", v: `${RUN.baseline.passing}/${RUN.baseline.total}` },
     { k: "fork()", v: `${RUN.forkMsEach} ms each` },
-    { k: "killed", v: RUN.severed, tone: "signal" },
+    { k: "killed", v: RUN.killed, tone: "signal" },
     {
       k: "exit 0",
       v: `${RUN.winner.id} · ${RUN.winner.passed}/${RUN.winner.total}`,
@@ -191,11 +191,11 @@ export function RunSection() {
         eyebrow={`Recorded run · ${RUN.date}`}
         title={
           <>
-            {RUN.heads.length} forks. {RUN.severed} <span className="hl">killed</span>. 1{" "}
+            {RUN.forks.length} forks. {RUN.killed} <span className="hl">killed</span>. 1{" "}
             <span className="hl-ok">exit&nbsp;0</span>.
           </>
         }
-        lede={`A real race: ${RUN.engine}, a ${RUN.repo} with ${RUN.baseline.failing} of ${RUN.baseline.total} tests failing. Fork ${RUN.winner.id} (${RUN.winner.strategy}) passed all ${RUN.winner.total} first, so the other ${RUN.severed} were killed.`}
+        lede={`A real race: ${RUN.engine}, a ${RUN.repo} with ${RUN.baseline.failing} of ${RUN.baseline.total} tests failing. Fork ${RUN.winner.id} (${RUN.winner.strategy}) passed all ${RUN.winner.total} first, so the other ${RUN.killed} were killed.`}
       />
 
       <div className={s.runGrid}>
@@ -283,7 +283,7 @@ const STEPS: {
     t: "Exit 0",
     cmd: "--apply",
     tone: "ok",
-    d: "The survivor's patch is yours to read and apply. No pass? The best fork's verified state seeds the next round.",
+    d: "The winning patch is yours to read and apply. No pass? The best fork seeds the next round, if it beat its parent.",
   },
 ];
 
@@ -554,7 +554,7 @@ export function Benchmark() {
               <span className={s.bigNumV}>{BENCH.speedup}</span>
               <span className={s.bigNumK}>faster to fork</span>
               <span className={s.bigNumN}>
-                {c.perHeadMs} ms vs {nf(p.perHeadMs)} ms
+                {c.perForkMs} ms vs {nf(p.perForkMs)} ms
               </span>
             </div>
             <div className={s.bigNum}>
@@ -567,21 +567,21 @@ export function Benchmark() {
           </div>
         </div>
 
-        <CrtPanel className={s.benchPanel} title={`node dist/cli.js bench ./tree --forks ${BENCH.heads}`}>
+        <CrtPanel className={s.benchPanel} title={`node dist/cli.js bench ./tree --forks ${BENCH.forks}`}>
           <Meter
             title="Time to fork one copy"
             rows={[
               {
                 label: "apfs-clonefile",
-                value: `${c.perHeadMs} ms`,
-                pct: (c.perHeadMs / p.perHeadMs) * 100,
+                value: `${c.perForkMs} ms`,
+                pct: (c.perForkMs / p.perForkMs) * 100,
                 win: true,
               },
-              { label: "plain copy", value: `${nf(p.perHeadMs)} ms`, pct: 100 },
+              { label: "plain copy", value: `${nf(p.perForkMs)} ms`, pct: 100 },
             ]}
           />
           <Meter
-            title={`Extra disk for ${BENCH.heads} forks`}
+            title={`Extra disk for ${BENCH.forks} forks`}
             rows={[
               {
                 label: "apfs-clonefile",
@@ -593,7 +593,7 @@ export function Benchmark() {
             ]}
           />
           <p className={s.benchNote}>
-            {BENCH.machine} · {BENCH.workload} · {BENCH.heads} forks. Extra disk is free space before vs after, so other
+            {BENCH.machine} · {BENCH.workload} · {BENCH.forks} forks. Extra disk is free space before vs after, so other
             activity on the machine shows up as noise.
           </p>
         </CrtPanel>

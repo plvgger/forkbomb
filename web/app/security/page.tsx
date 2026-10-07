@@ -112,9 +112,9 @@ const MATRIX: Row[] = [
   },
   {
     control: "Reads",
-    cc: "Deny list under ~: credentials, .config, .claude, shell history, Keychains, app data, Desktop, Documents, Downloads",
+    cc: "Deny list under ~: credentials, .config, .claude, every .env key file in ~ and its dot-folders, shell history, Keychains, app data, Desktop, Documents, Downloads",
     api: "Home folder unreadable except the clone, its temp dir and toolchain folders (node, python, rust…)",
-    proof: "sandbox.test.ts · canary",
+    proof: "sandbox.test.ts · claude-code.test.ts · canary",
   },
   {
     control: "Network",

@@ -24,7 +24,7 @@ export function serve(source: { live: EventBus } | { replay: Stamped[] }, port: 
       return;
     }
     if (path === "/data.js") {
-      const body = "live" in source ? "window.HYDRA_LIVE = true;" : `window.HYDRA_EVENTS = ${JSON.stringify(source.replay)};`;
+      const body = "live" in source ? "window.FORKBOMB_LIVE = true;" : `window.FORKBOMB_EVENTS = ${JSON.stringify(source.replay)};`;
       res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-store" }).end(body);
       return;
     }

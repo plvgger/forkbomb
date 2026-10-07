@@ -4,16 +4,16 @@ import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { type SandboxSpec, runSandboxed } from "./sandbox.js";
 import { clip } from "./util.js";
 
-/** Anthropic-defined, schema-less tools. Each head gets exactly these two. */
-export const HEAD_TOOLS = [
+/** Anthropic-defined, schema-less tools. Each fork gets exactly these two. */
+export const FORK_TOOLS = [
   { type: "bash_20250124" as const, name: "bash" as const },
   { type: "text_editor_20250728" as const, name: "str_replace_based_edit_tool" as const },
 ];
 
-/** Every head sees the same virtual root, so all heads share one cached prompt prefix. */
+/** Every fork sees the same virtual root, so all forks share one cached prompt prefix. */
 export const VIRTUAL_ROOT = "/workspace";
 
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", ".next", "__pycache__", ".venv", "venv", ".forkbomb-runs", ".hydra-runs"]);
+const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", ".next", "__pycache__", ".venv", "venv", ".forkbomb-runs"]);
 const MAX_VIEW_CHARS = 24_000;
 
 export interface ToolOutcome {
@@ -24,7 +24,7 @@ export interface ToolOutcome {
 
 export class ToolError extends Error {}
 
-/** One head's workspace: a clone directory plus the sandbox rules that confine it. */
+/** One fork's workspace: a clone directory plus the sandbox rules that confine it. */
 export class Workspace {
   readonly rootReal: string;
 
@@ -37,7 +37,7 @@ export class Workspace {
 
   /**
    * Map a model-supplied path into this workspace, or throw. Paths are untrusted:
-   * each existing component is lstat'd so a symlink planted by a head's shell
+   * each existing component is lstat'd so a symlink planted by a fork's shell
    * can't carry a write outside the clone or into .git.
    */
   resolve(p: string): string {
@@ -195,7 +195,7 @@ export class Workspace {
 
 /**
  * Write without following a final-component symlink, and refuse hard links:
- * a head's shell could hard-link a file from outside the clone into it.
+ * a fork's shell could hard-link a file from outside the clone into it.
  */
 async function safeWrite(abs: string, text: string, shown: string): Promise<void> {
   const st = await lstat(abs).catch(() => null);

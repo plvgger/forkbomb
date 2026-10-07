@@ -1,6 +1,5 @@
 // Forkbomb process tree. One code path for live runs (SSE) and recorded runs (replay).
-// Event types and fields keep their pre-rename names (head, sever, winner, "body") so
-// old runs still replay; only the words on screen changed: fork, killed, exit 0, pid 1.
+// The repo copy every fork descends from is "body" in events and "pid 1" on screen.
 (() => {
   "use strict";
 
@@ -29,6 +28,8 @@
     setStatus("WAITING", "idle");
     $("elapsed").textContent = "0.0s";
     $("cost").textContent = "$0.00";
+    $("cost").removeAttribute("title");
+    $("costUnit").textContent = " spent";
     $("evCount").textContent = "";
   }
 
@@ -63,10 +64,10 @@
   }
 
   // ---------- log ----------
-  function log(t, head, msg, cls = "") {
+  function log(t, fork, msg, cls = "") {
     const li = document.createElement("li");
     if (cls) li.className = cls;
-    li.innerHTML = `<span class="t">${fmtT(t)}</span><span class="h">${esc(head || "")}</span><span class="m" title="${esc(msg)}">${esc(msg)}</span>`;
+    li.innerHTML = `<span class="t">${fmtT(t)}</span><span class="h">${esc(fork || "")}</span><span class="m" title="${esc(msg)}">${esc(msg)}</span>`;
     const ol = $("log");
     const stick = ol.scrollTop + ol.clientHeight >= ol.scrollHeight - 30;
     ol.appendChild(li);
@@ -110,11 +111,11 @@
   }
   function setState(node, status) {
     node.status = status;
-    node.el.classList.remove("running", "judging", "passed", "failed", "severed", "won");
+    node.el.classList.remove("running", "judging", "passed", "failed", "killed", "won");
     node.el.classList.add(status);
     if (node.wire) {
       node.wire.classList.remove("live", "judging", "dead", "done", "won");
-      node.wire.classList.add({ running: "live", judging: "judging", severed: "dead", won: "won" }[status] || "done");
+      node.wire.classList.add({ running: "live", judging: "judging", killed: "dead", won: "won" }[status] || "done");
     }
   }
 
@@ -154,8 +155,8 @@
     n.cut.setAttribute("d", `M${pt.x - 6},${pt.y - 6} L${pt.x + 6},${pt.y + 6} M${pt.x + 6},${pt.y - 6} L${pt.x - 6},${pt.y + 6}`);
   }
 
-  function sever(n) {
-    setState(n, "severed");
+  function kill(n) {
+    setState(n, "killed");
     setChip(n, "KILLED");
     if (n.wire && !n.cut) {
       n.cut = document.createElementNS(SVG, "path");
@@ -185,7 +186,7 @@
     S.lastWall = performance.now();
     S.events++;
     $("evCount").textContent = `${S.events}`;
-    const n = e.head ? S.nodes.get(e.head) : null;
+    const n = e.fork ? S.nodes.get(e.fork) : null;
 
     switch (e.type) {
       case "run_start": {
@@ -196,8 +197,9 @@
         $("model").textContent = `${e.model} · ${e.effort} · ${e.mode}`;
         S.subscription = e.engine === "claude-code";
         if (S.subscription) {
-          $("cost").textContent = "subscription";
+          $("cost").textContent = "on Claude plan";
           $("cost").title = "Forks run through Claude Code on your Claude plan, so there's no per-token bill.";
+          $("costUnit").textContent = "";
         }
         $("tSandbox").textContent = e.sandbox ? "Seatbelt" : "off";
         $("tSandboxS").textContent = e.sandbox ? (e.network ? "writes confined · network on" : "writes confined · network off") : "no sandbox";
@@ -205,7 +207,7 @@
         q(b, ".strat").textContent = e.repo.split("/").slice(-2).join("/");
         setTick(b, "the original repository");
         layout();
-        log(e.t, "", `run ${e.runId}: ${e.heads} forks × ${e.rounds} round${e.rounds > 1 ? "s" : ""}`);
+        log(e.t, "", `run ${e.runId}: ${e.forks} forks × ${e.rounds} round${e.rounds > 1 ? "s" : ""}`);
         break;
       }
       case "baseline": {
@@ -220,22 +222,22 @@
         break;
       }
       case "fork": {
-        e.heads.forEach((id, i) => makeNode(id, e.round, e.parent, { stagger: i }));
+        e.forks.forEach((id, i) => makeNode(id, e.round, e.parent, { stagger: i }));
         layout();
         const avg = e.msEach.reduce((a, b) => a + b, 0) / Math.max(1, e.msEach.length);
         $("tFork").textContent = fmtMs(avg);
         $("tFork").classList.add("hot");
-        $("tForkS").textContent = `per fork · ${e.heads.length} forks · ${e.forker}`;
+        $("tForkS").textContent = `per fork · ${e.forks.length} forks · ${e.forker}`;
         $("tLogical").textContent = fmtBytes(e.logicalBytes);
-        $("tLogicalS").textContent = `${e.heads.length} × ${fmtBytes(e.workspaceBytes)}`;
+        $("tLogicalS").textContent = `${e.forks.length} × ${fmtBytes(e.workspaceBytes)}`;
         $("tPhysical").textContent = fmtBytes(e.physicalBytes);
         $("tPhysical").classList.add("hot");
-        log(e.t, pid(e.parent), `forked ${e.heads.length} copies in ${fmtMs(avg)} each`, "good");
+        log(e.t, pid(e.parent), `forked ${e.forks.length} copies in ${fmtMs(avg)} each`, "good");
         const twrap = $("treeWrap");
         twrap.scrollTo({ left: twrap.scrollWidth, behavior: "smooth" });
         break;
       }
-      case "head_start":
+      case "fork_start":
         if (!n) break;
         q(n, ".strat").textContent = e.strategy;
         q(n, ".strat").title = e.brief;
@@ -247,23 +249,23 @@
         n.tools++;
         setTick(n, e.tool === "bash" ? `$ ${e.summary}` : `✎ ${short(e.summary)}`);
         q(n, ".turns").textContent = `${n.tools} calls`;
-        log(e.t, e.head, e.tool === "bash" ? `$ ${e.summary}` : short(e.summary), e.ok ? "" : "warn");
+        log(e.t, e.fork, e.tool === "bash" ? `$ ${e.summary}` : short(e.summary), e.ok ? "" : "warn");
         break;
       case "note":
         if (!n || n.status !== "running") break;
         setTick(n, e.text, true);
         break;
-      case "head_done":
+      case "fork_done":
         if (!n) break;
         if (e.costUsd != null && !S.subscription) {
           S.cost += e.costUsd;
           $("cost").textContent = `$${S.cost.toFixed(2)}`;
         }
         q(n, ".turns").textContent = `${e.turns} turns`;
-        if (e.reason === "severed") break;
+        if (e.reason === "killed") break;
         if (e.reason !== "end_turn") setChip(n, { max_turns: "OUT OF TURNS", timeout: "TIMED OUT", refusal: "REFUSED", error: "ERROR" }[e.reason] || e.reason);
-        if (e.reason === "error") log(e.t, e.head, `error: ${e.error || ""}`, "bad");
-        else log(e.t, e.head, `finished (${e.reason.replace("_", " ")}) after ${e.turns} turns`);
+        if (e.reason === "error") log(e.t, e.fork, `error: ${e.error || ""}`, "bad");
+        else log(e.t, e.fork, `finished (${e.reason.replace("_", " ")}) after ${e.turns} turns`);
         break;
       case "judging":
         if (!n) break;
@@ -281,14 +283,14 @@
         q(n, ".score").textContent = total != null ? `${e.passed}/${total}` : `${Math.round(e.score * 100)}%`;
         setTick(n, e.tampered.length ? `tests edited, reverted: ${e.tampered.join(", ")}` : `${e.diffLines} lines in ${e.filesChanged} file${e.filesChanged === 1 ? "" : "s"}`);
         if (e.tampered.length) q(n, ".tick").classList.add("tamper");
-        log(e.t, e.head, `${total != null ? `${e.passed}/${total} passing` : `score ${Math.round(e.score * 100)}%`} · ${e.diffLines} lines${e.tampered.length ? " · test edits reverted" : ""}`, pass ? "good" : "warn");
+        log(e.t, e.fork, `${total != null ? `${e.passed}/${total} passing` : `score ${Math.round(e.score * 100)}%`} · ${e.diffLines} lines${e.tampered.length ? " · test edits reverted" : ""}`, pass ? "good" : "warn");
         break;
       }
-      case "sever":
+      case "kill":
         if (!n) break;
-        sever(n);
+        kill(n);
         setTick(n, e.why, true);
-        log(e.t, e.head, `killed: ${e.why}`, "bad");
+        log(e.t, e.fork, `killed: ${e.why}`, "bad");
         break;
       case "round_end": {
         const best = e.best && S.nodes.get(e.best);
@@ -298,17 +300,17 @@
       }
       case "winner": {
         if (!n) break;
-        S.winner = e.head;
+        S.winner = e.fork;
         setState(n, "won");
         setChip(n, "EXIT 0");
         for (const other of S.nodes.values()) {
-          if (other.id !== e.head && other.status === "running") sever(other);
+          if (other.id !== e.fork && other.status === "running") kill(other);
         }
         $("winnerPanel").hidden = false;
-        $("winnerId").textContent = `${e.head} · ${e.diffLines} lines`;
+        $("winnerId").textContent = `${e.fork} · ${e.diffLines} lines`;
         $("winnerSummary").textContent = e.summary || "";
         $("diff").innerHTML = renderDiff(e.patch);
-        log(e.t, e.head, `exit 0 · ${e.diffLines} lines in ${e.filesChanged} file${e.filesChanged === 1 ? "" : "s"}`, "good");
+        log(e.t, e.fork, `exit 0 · ${e.diffLines} lines in ${e.filesChanged} file${e.filesChanged === 1 ? "" : "s"}`, "good");
         break;
       }
       case "run_end":
@@ -338,8 +340,8 @@
   reset();
   requestAnimationFrame(tickClock);
 
-  if (Array.isArray(window.HYDRA_EVENTS)) {
-    const events = window.HYDRA_EVENTS;
+  if (Array.isArray(window.FORKBOMB_EVENTS)) {
+    const events = window.FORKBOMB_EVENTS;
     replay = { i: 0, timer: null, playing: true };
     $("replayBar").hidden = false;
     const speed = () => Number($("speed").value) || 4;

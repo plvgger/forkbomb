@@ -6,6 +6,6 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     testTimeout: 60_000,
     pool: "forks",
-    env: { HYDRA_HOME: join(process.cwd(), ".test-tmp", "home") },
+    env: { FORKBOMB_HOME: join(process.cwd(), ".test-tmp", "home") },
   },
 });

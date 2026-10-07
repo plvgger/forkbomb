@@ -53,7 +53,7 @@ export const RUN_FLAGS: Flag[] = [
   {
     flag: "--forks N",
     def: "8",
-    desc: "Forks per round. 1 to 64. The pre-rename --heads, --head-timeout and --keep-heads names still work.",
+    desc: "Forks per round. 1 to 64.",
   },
   {
     flag: "--rounds N",
@@ -324,7 +324,7 @@ export const EVENTS: { type: string; meaning: string }[] = [
     meaning: "Forks made, per-fork clone time, forker used, logical and physical bytes.",
   },
   {
-    type: "head_start",
+    type: "fork_start",
     meaning: "A fork starts with its parent and strategy.",
   },
   {
@@ -333,7 +333,7 @@ export const EVENTS: { type: string; meaning: string }[] = [
   },
   { type: "note", meaning: "A short progress note from a fork." },
   {
-    type: "head_done",
+    type: "fork_done",
     meaning: "A fork stopped: reason, turns, cost when known.",
   },
   { type: "judging", meaning: "The judge picked up a fork's patch." },
@@ -341,7 +341,7 @@ export const EVENTS: { type: string; meaning: string }[] = [
     type: "judge",
     meaning: "Verdict: score, pass and fail counts, diff size, reverted test edits.",
   },
-  { type: "sever", meaning: "A fork was killed, and why." },
+  { type: "kill", meaning: "A fork was killed, and why." },
   { type: "round_end", meaning: "Best fork of the round and its score." },
   { type: "winner", meaning: "The fork that exited 0, its patch and summary." },
   {
