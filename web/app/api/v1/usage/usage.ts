@@ -1,10 +1,13 @@
 // Read-only usage view for one workspace: the latest settled requests plus all-time totals.
+// The usage table keeps the upstream model for operators; clients only ever see the hosted model name.
 
 import { getDb, int, iso } from "@/lib/server/db";
+import { hostedModel } from "@/lib/server/gateway/chat";
 
 export type UsageRow = {
   id: string;
   createdAt: string;
+  /** Always the hosted model name the gateway shows ("forkbomb-hosted"), never the upstream one. */
   model: string;
   inputTokens: number;
   outputTokens: number;
@@ -27,13 +30,12 @@ export async function workspaceUsage(workspaceId: string, limit: number): Promis
   const rows = await db.query<{
     id: unknown;
     created_at: unknown;
-    model: string;
     input_tokens: unknown;
     output_tokens: unknown;
     cost_micro_usd: unknown;
     status: UsageRow["status"];
   }>(
-    `SELECT id::text AS id, created_at, model, input_tokens, output_tokens, cost_micro_usd, status
+    `SELECT id::text AS id, created_at, input_tokens, output_tokens, cost_micro_usd, status
      FROM usage WHERE workspace_id = $1 AND status <> 'expired'
      ORDER BY created_at DESC, id DESC LIMIT $2`,
     [workspaceId, limit],
@@ -52,7 +54,7 @@ export async function workspaceUsage(workspaceId: string, limit: number): Promis
     usage: rows.map((r) => ({
       id: String(r.id),
       createdAt: iso(r.created_at),
-      model: r.model,
+      model: hostedModel(),
       inputTokens: int(r.input_tokens),
       outputTokens: int(r.output_tokens),
       costMicroUsd: int(r.cost_micro_usd),

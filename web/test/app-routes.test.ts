@@ -221,7 +221,8 @@ describe("GET /api/v1/usage", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const body = (await res.json()) as { usage: { model: string; costMicroUsd: number }[]; totals: unknown };
-    expect(body.usage.map((u) => u.model).sort()).toEqual(["m1", "m2"]);
+    expect(body.usage.map((u) => u.model)).toEqual(["forkbomb-hosted", "forkbomb-hosted"]); // never the upstream model
+    expect(body.usage.map((u) => u.costMicroUsd)).toEqual([6_000, 4_000]);
     expect(body.totals).toEqual({
       requests: 2,
       inputTokens: 300,
