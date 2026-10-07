@@ -1,0 +1,138 @@
+diff --git a/calc.js b/calc.js
+index 4e2ff7c..c1ddcfa 100644
+--- a/calc.js
++++ b/calc.js
+@@ -1,19 +1,27 @@
+ // A small arithmetic evaluator: + - * / ^, parentheses, unary minus, decimals.
+ // evaluate("2 + 3 * 4") === 14
++//
++// Precedence (loose to tight): + -  |  * /  |  unary -  |  ^  |  primary
++// ^ is right-associative: 2 ^ 3 ^ 2 === 512, and -2 ^ 2 === -4.
+ 
+ export function tokenize(src) {
+   const tokens = [];
+   let i = 0;
+   while (i < src.length) {
+     const c = src[i];
+-    if (c === " ") {
++    if (/\s/.test(c)) {
+       i++;
+       continue;
+     }
+-    if (/[0-9]/.test(c)) {
++    if (/[0-9.]/.test(c)) {
+       let j = i;
+       while (j < src.length && /[0-9.]/.test(src[j])) j++;
+-      tokens.push({ type: "num", value: parseFloat(src.slice(i, j)), pos: i });
++      const text = src.slice(i, j);
++      // A number is digits with at most one decimal point: "42", "1.5", ".5", "5.".
++      if (!/^(\d+\.?\d*|\.\d+)$/.test(text)) {
++        throw new SyntaxError("bad number " + text + " at position " + i);
++      }
++      tokens.push({ type: "num", value: parseFloat(text), pos: i });
+       i = j;
+       continue;
+     }
+@@ -22,7 +30,7 @@ export function tokenize(src) {
+       i++;
+       continue;
+     }
+-    throw new Error("bad character " + c);
++    throw new SyntaxError("bad character " + c + " at position " + i);
+   }
+   return tokens;
+ }
+@@ -31,30 +39,80 @@ export function evaluate(src) {
+   const tokens = tokenize(src);
+   let pos = 0;
+ 
++  function fail(msg) {
++    const t = tokens[pos];
++    throw new SyntaxError(t ? msg + " at position " + t.pos : msg + " at end of input");
++  }
++
++  // primary := number | "(" expr ")"
+   function primary() {
+-    const t = tokens[pos++];
+-    if (t.type === "num") return t.value;
++    const t = tokens[pos];
++    if (!t) fail("unexpected end of input");
++    if (t.type === "num") {
++      pos++;
++      return t.value;
++    }
+     if (t.value === "(") {
++      pos++;
+       const v = expr();
++      if (!tokens[pos] || tokens[pos].value !== ")") fail("expected )");
+       pos++;
+       return v;
+     }
+-    throw new Error("unexpected " + t.value);
++    fail("unexpected " + t.value);
+   }
+ 
+-  function expr() {
++  // power := primary ("^" factor)?   -- right-associative
++  function power() {
+     let v = primary();
+-    while (pos < tokens.length && tokens[pos].value !== ")") {
+-      const op = tokens[pos++].value;
+-      const r = primary();
+-      if (op === "+") v += r;
+-      else if (op === "-") v -= r;
+-      else if (op === "*") v *= r;
+-      else if (op === "/") v /= r;
+-      else if (op === "^") v = v ** r;
++    if (tokens[pos] && tokens[pos].value === "^") {
++      pos++;
++      v = v ** factor();
+     }
+     return v;
+   }
+ 
+-  return expr();
++  // factor := "-" factor | power   -- unary minus binds tighter than * / but looser than ^
++  function factor() {
++    if (tokens[pos] && tokens[pos].value === "-") {
++      pos++;
++      return -factor();
++    }
++    return power();
++  }
++
++  // term := factor (("*" | "/") factor)*
++  function term() {
++    let v = factor();
++    while (tokens[pos] && (tokens[pos].value === "*" || tokens[pos].value === "/")) {
++      const op = tokens[pos];
++      pos++;
++      const r = factor();
++      if (op.value === "/") {
++        if (r === 0) throw new RangeError("division by zero at position " + op.pos);
++        v /= r;
++      } else {
++        v *= r;
++      }
++    }
++    return v;
++  }
++
++  // expr := term (("+" | "-") term)*
++  function expr() {
++    let v = term();
++    while (tokens[pos] && (tokens[pos].value === "+" || tokens[pos].value === "-")) {
++      const op = tokens[pos].value;
++      pos++;
++      const r = term();
++      v = op === "+" ? v + r : v - r;
++    }
++    return v;
++  }
++
++  const v = expr();
++  if (pos < tokens.length) {
++    fail("unexpected " + tokens[pos].value);
++  }
++  return v;
+ }

@@ -1,0 +1,64 @@
+# Builds and tests the CLI and the site on every push to main and every pull request.
+#
+# cli: macOS, like the CLI itself. The tests make real APFS clones (clonefile, through the helper that
+#      clang compiles from native/hclone.c on first use) and run fork commands under sandbox-exec (Seatbelt).
+#      Every agent is a stand-in (test/fake-claude.mjs, a scripted model, local fake gateways), so no Claude
+#      login, API key or outbound network is needed, and FORKBOMB_HOME points into .test-tmp (vitest.config.ts).
+# web: Linux. Typecheck, unit tests (PGlite in memory) and `npm run build`. With no DATABASE_URL, the build's
+#      db:migrate step dry-runs every migration on a throwaway in-memory PGlite, then `next build` runs.
+#
+# Standard GitHub-hosted runners are free on a public repo, and a newer push to the same ref cancels the
+# older run, so no minutes go to a commit that's already been superseded.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cli:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npx vitest run
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npx tsc --noEmit -p .
+      - run: npx vitest run
+      - run: npm run build

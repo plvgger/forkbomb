@@ -1,0 +1,47 @@
+# Monthly dependency updates. Each entry groups every update into one PR,
+# so each ecosystem opens at most one PR per month.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(cli)"
+    groups:
+      cli:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(web)"
+    groups:
+      web:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /ops
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(ops)"
+    groups:
+      ops:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions:
+        patterns: ["*"]
