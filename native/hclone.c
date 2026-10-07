@@ -1,6 +1,6 @@
 // hclone: clone one directory tree into N destinations with a single
 // clonefile(2) call each. On APFS the clone shares every data block with the
-// source until one side writes, so a head costs metadata, not a copy.
+// source until one side writes, so a fork costs metadata, not a copy.
 //
 // usage: hclone SRC DST [DST...]
 // prints a JSON array: [{"dst": "...", "ms": 1.23, "ok": true, "err": ""}, ...]

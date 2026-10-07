@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { BRAND } from "./brand.js";
 import type { EventBus } from "./events.js";
 import { costOf } from "./pricing.js";
-import { HEAD_TOOLS, type Workspace } from "./tools.js";
+import { FORK_TOOLS, type Workspace } from "./tools.js";
 import type { Semaphore } from "./util.js";
 
 type BetaMessage = Anthropic.Beta.Messages.BetaMessage;
@@ -62,7 +62,7 @@ export class AnthropicModel implements ModelClient {
         model: this.model,
         max_tokens: 32_000,
         system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
-        tools: HEAD_TOOLS,
+        tools: FORK_TOOLS,
         messages: req.messages,
         output_config: { effort: this.effort },
         cache_control: { type: "ephemeral" },
@@ -76,7 +76,7 @@ export class AnthropicModel implements ModelClient {
   }
 }
 
-export interface HeadConfig {
+export interface ForkConfig {
   id: string;
   workspace: Workspace;
   model: ModelClient;
@@ -84,14 +84,14 @@ export interface HeadConfig {
   prompt: string;
   maxTurns: number;
   signal: AbortSignal;
-  /** Why the signal fired: "severed" by a winner, or the head's own "timeout". */
-  abortReason: () => "severed" | "timeout";
+  /** Why the signal fired: "killed" by a winner, or the fork's own "timeout". */
+  abortReason: () => "killed" | "timeout";
   bus: EventBus;
   apiSlots: Semaphore;
 }
 
-export interface HeadResult {
-  reason: "end_turn" | "max_turns" | "severed" | "refusal" | "timeout" | "error";
+export interface ForkResult {
+  reason: "end_turn" | "max_turns" | "killed" | "refusal" | "timeout" | "error";
   turns: number;
   inputTokens: number;
   outputTokens: number;
@@ -100,8 +100,8 @@ export interface HeadResult {
   error?: string;
 }
 
-/** One head: a plain tool-use loop over bash and the text editor, inside its own clone. */
-export async function runHead(cfg: HeadConfig): Promise<HeadResult> {
+/** One fork: a plain tool-use loop over bash and the text editor, inside its own clone. */
+export async function runFork(cfg: ForkConfig): Promise<ForkResult> {
   const { bus, id, signal, workspace } = cfg;
   const messages: BetaMessageParam[] = [{ role: "user", content: cfg.prompt }];
   let turns = 0;
@@ -110,7 +110,7 @@ export async function runHead(cfg: HeadConfig): Promise<HeadResult> {
   let cost: number | null = 0;
   let summary = "";
 
-  const finish = (reason: HeadResult["reason"], error?: string): HeadResult => ({
+  const finish = (reason: ForkResult["reason"], error?: string): ForkResult => ({
     reason,
     turns,
     inputTokens,
@@ -142,10 +142,10 @@ export async function runHead(cfg: HeadConfig): Promise<HeadResult> {
       cost = cost === null || c === null ? null : cost + c;
 
       for (const b of msg.content) {
-        if (b.type === "thinking" && b.thinking.trim()) bus.emit({ type: "note", head: id, text: b.thinking.trim().slice(0, 280) });
+        if (b.type === "thinking" && b.thinking.trim()) bus.emit({ type: "note", fork: id, text: b.thinking.trim().slice(0, 280) });
         if (b.type === "text" && b.text.trim()) {
           summary = b.text.trim();
-          bus.emit({ type: "note", head: id, text: summary.slice(0, 280) });
+          bus.emit({ type: "note", fork: id, text: summary.slice(0, 280) });
         }
       }
 
@@ -184,7 +184,7 @@ export async function runHead(cfg: HeadConfig): Promise<HeadResult> {
               : { text: `unknown tool ${use.name}`, isError: true, summary: use.name };
         bus.emit({
           type: "tool",
-          head: id,
+          fork: id,
           tool: use.name === "bash" ? "bash" : "edit",
           summary: out.summary,
           ok: !out.isError,

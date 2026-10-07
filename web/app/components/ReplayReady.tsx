@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 /**
  * Listens for the embedded replay's "ready" message and marks the enclosing
  * .replay-frame, which swaps the static poster for the live replay (CSS).
- * The message type keeps its original "forkbomb:" prefix: public/replay/app.js sends it.
+ * public/replay/app.js posts { type: "forkbomb:replay-ready" } once the tree has drawn.
  */
 export function ReplayReady() {
   const ref = useRef<HTMLSpanElement>(null);

@@ -1,5 +1,5 @@
 /**
- * Each head gets a different way of attacking the same task. Diversity is the
+ * Each fork gets a different way of attacking the same task. Diversity is the
  * point: N copies with one strategy fail the same way N times.
  */
 export interface Strategy {

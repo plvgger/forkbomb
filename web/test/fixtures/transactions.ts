@@ -9,7 +9,7 @@ import type { ParsedTransaction } from "../../lib/server/burns";
 const MEMO_V1_PROGRAM = LEGACY_MEMO_PROGRAM_ADDRESS_V1;
 const MEMO_V2_PROGRAM = LEGACY_MEMO_PROGRAM_ADDRESS_V3; // MemoSq4…, the "v2" memo program burns.ts reads
 
-export const MINT = "FORKBOMBxKJ7cS1tm5XoUeAbQ9vUEDRrdRiLNd5Ux7Ppump";
+export const MINT = "FoRKBxKJ7cS1tm5XoUeAbQ9vUEDRrdRiLNd5Ux7Ppump";
 export const OTHER_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 export const OWNER = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
 export const ATA = "3N7xNrAgyCBYGBcSwpqLzSW5qmyTvYLpyAzfYWiK1nkY";

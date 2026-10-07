@@ -132,8 +132,8 @@ a { color: inherit; }
 .card.failed .chip { color: var(--muted); }
 .card.failed .bar i { background: #8a6a2c; }
 .card.passed .bar i, .card.won .bar i { background: var(--alive); }
-.card.severed { opacity: .38; filter: grayscale(.9); transform: scale(.97); }
-.card.severed .chip { color: var(--dead); border-color: rgba(255,77,31,.45); }
+.card.killed { opacity: .38; filter: grayscale(.9); transform: scale(.97); }
+.card.killed .chip { color: var(--dead); border-color: rgba(255,77,31,.45); }
 .card.won { border-color: var(--alive); box-shadow: 0 0 0 1px var(--alive), 0 0 28px rgba(60,242,180,.28); }
 .card.won .chip { color: #06110d; background: var(--alive); border-color: var(--alive); }
 .card.best { border-color: rgba(244,183,64,.6); }

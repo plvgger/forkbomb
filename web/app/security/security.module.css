@@ -81,7 +81,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1.1fr) 64px minmax(0, 1fr);
   grid-template-areas:
-    "off deny head patch forkbomb"
+    "off deny fork patch orch"
     "cap cap cap cap cap";
   align-items: stretch;
   row-gap: var(--space-5);
@@ -104,8 +104,8 @@
   background: var(--surface);
   border: 1px solid var(--border-strong);
 }
-.zoneHead { grid-area: head; border-style: dashed; border-color: var(--border-hover); background: var(--bg-raised); }
-.zoneForkbomb { grid-area: forkbomb; }
+.zoneFork { grid-area: fork; border-style: dashed; border-color: var(--border-hover); background: var(--bg-raised); }
+.zoneOrchestrator { grid-area: orch; }
 .zoneOff { grid-area: off; background: transparent; }
 .zoneLabel {
   display: flex;
@@ -117,8 +117,8 @@
   color: var(--text-2);
 }
 .zoneKey { width: 8px; height: 8px; border-radius: 2px; border: 1px solid var(--text-3); flex-shrink: 0; }
-.zoneHead .zoneKey { border-style: dashed; border-color: var(--text-2); }
-.zoneForkbomb .zoneKey { background: var(--text-2); border-color: var(--text-2); }
+.zoneFork .zoneKey { border-style: dashed; border-color: var(--text-2); }
+.zoneOrchestrator .zoneKey { background: var(--text-2); border-color: var(--text-2); }
 .zoneOff .zoneKey { border-color: var(--danger-line); background: var(--danger-soft); }
 .nodes { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .node {
@@ -177,8 +177,8 @@
 @media (max-width: 959px) {
   .boundary {
     grid-template-columns: minmax(0, 1fr);
-    /* Same order as desktop, top to bottom: the denied link always touches the head, never Forkbomb. */
-    grid-template-areas: "off" "deny" "head" "patch" "forkbomb" "cap";
+    /* Same order as desktop, top to bottom: the denied link always touches the fork, never the orchestrator. */
+    grid-template-areas: "off" "deny" "fork" "patch" "orch" "cap";
     row-gap: 0;
   }
   .conn { flex-direction: row; height: 56px; }

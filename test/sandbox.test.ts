@@ -11,14 +11,14 @@ function spec(root: string, extra: Partial<SandboxSpec> = {}): SandboxSpec {
 const run = (cmd: string, s: SandboxSpec, timeoutMs = 20_000) => runSandboxed(cmd, s, { timeoutMs, maxOutput: 10_000 });
 
 describe("sandbox", () => {
-  it("lets a head write inside its own clone", async () => {
+  it("lets a fork write inside its own clone", async () => {
     const root = tempDir("sb");
     const r = await run("echo hello > inside.txt && cat inside.txt", spec(root));
     expect(r.code).toBe(0);
     expect(r.output.trim()).toBe("hello");
   });
 
-  it("blocks writes outside the clone, including a sibling head", async () => {
+  it("blocks writes outside the clone, including a sibling fork", async () => {
     const root = tempDir("sb");
     const sibling = tempDir("sb-sibling");
     const r = await run(`echo pwned > ${JSON.stringify(join(sibling, "x"))}; echo pwned > ../escape.txt; echo done`, spec(root));
@@ -27,11 +27,11 @@ describe("sandbox", () => {
     expect(existsSync(join(root, "..", "escape.txt"))).toBe(false);
   });
 
-  it("makes .git read-only for heads but not for the judge", async () => {
+  it("makes .git read-only for forks but not for the judge", async () => {
     const root = tempDir("sb");
     mkdirSync(join(root, ".git"));
-    const head = await run("echo x > .git/config", spec(root));
-    expect(head.code).not.toBe(0);
+    const fork = await run("echo x > .git/config", spec(root));
+    expect(fork.code).not.toBe(0);
     expect(existsSync(join(root, ".git", "config"))).toBe(false);
     const judge = await run("echo x > .git/config", spec(root, { gitWrite: true }));
     expect(judge.code).toBe(0);
@@ -52,7 +52,7 @@ describe("sandbox", () => {
     }
   });
 
-  it("does not leak API keys into a head's environment", async () => {
+  it("does not leak API keys into a fork's environment", async () => {
     const root = tempDir("sb");
     process.env.ANTHROPIC_API_KEY = "sk-test-should-not-leak";
     try {
@@ -64,7 +64,7 @@ describe("sandbox", () => {
     }
   });
 
-  it("can't read a sibling head or anything else under home, but can read its own clone", async () => {
+  it("can't read a sibling fork or anything else under home, but can read its own clone", async () => {
     const root = tempDir("sb");
     const sibling = tempDir("sb-sibling");
     writeFileSync(join(sibling, "secret.txt"), "sibling-data");

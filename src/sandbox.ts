@@ -8,15 +8,15 @@ import { clip } from "./util.js";
 export interface SandboxSpec {
   /** Workspace the commands may write to. */
   root: string;
-  /** Private temp dir for this head. */
+  /** Private temp dir for this fork. */
   tmp: string;
   /** Allow outbound network (default: loopback only). */
   network: boolean;
-  /** Allow writes to root/.git. Heads never get this; the judge does. */
+  /** Allow writes to root/.git. Forks never get this; the judge does. */
   gitWrite: boolean;
   /** Turn the Seatbelt sandbox off (not recommended; for non-macOS dev only). */
   disabled?: boolean;
-  /** Extra folders under ~ a head may read (e.g. a shared fixtures dir). */
+  /** Extra folders under ~ a fork may read (e.g. a shared fixtures dir). */
   allowRead?: string[];
 }
 
@@ -31,7 +31,7 @@ export interface RunOutcome {
 /**
  * Toolchain folders under ~ that test commands commonly need to read. Everything
  * else under ~ (other projects, shell history, app data, credentials) is
- * unreadable from inside a head. Add more per run with --allow-read.
+ * unreadable from inside a fork. Add more per run with --allow-read.
  */
 export const HOME_TOOLCHAINS = [
   ".nvm", ".volta", ".bun", ".deno", ".cargo", ".rustup", ".pyenv", ".rbenv", ".rvm", ".gem",
@@ -65,8 +65,8 @@ function realOrSelf(p: string): string {
 }
 
 /**
- * Seatbelt (sandbox-exec) profile for one head:
- * - writes only inside the head's clone and private temp dir (.git excluded for heads);
+ * Seatbelt (sandbox-exec) profile for one fork:
+ * - writes only inside the fork's clone and private temp dir (.git excluded for forks);
  * - nothing under the home folder is readable except the clone, the temp dir and
  *   toolchain folders (metadata stays visible so path lookups behave normally);
  * - no network except loopback, and no access to the system DNS resolver.
@@ -100,7 +100,7 @@ export function seatbeltProfile(spec: SandboxSpec): string {
   return lines.join("\n");
 }
 
-/** The only environment a head's shell inherits. No API keys, no tokens. */
+/** The only environment a fork's shell inherits. No API keys, no tokens. */
 export function cleanEnv(tmp: string): NodeJS.ProcessEnv {
   const keep = ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "SHELL"];
   const env: NodeJS.ProcessEnv = {};

@@ -1,7 +1,7 @@
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { claudeEnv, claudeSettings, runClaudeCodeHead } from "../src/engines/claude-code.js";
+import { claudeEnv, claudeSettings, keyFiles, runClaudeCodeFork } from "../src/engines/claude-code.js";
 import { EventBus } from "../src/events.js";
 import { DEFAULT_PROTECT } from "../src/judge.js";
 import { runRace } from "../src/orchestrator.js";
@@ -27,7 +27,7 @@ afterEach(() => {
   delete process.env.ANTHROPIC_API_KEY;
 });
 
-function head(dir: string, over: Partial<Parameters<typeof runClaudeCodeHead>[0]> = {}) {
+function fork(dir: string, over: Partial<Parameters<typeof runClaudeCodeFork>[0]> = {}) {
   const bus = new EventBus();
   const ctl = new AbortController();
   const cfg = {
@@ -39,7 +39,7 @@ function head(dir: string, over: Partial<Parameters<typeof runClaudeCodeHead>[0]
     effort: "low",
     network: false,
     signal: ctl.signal,
-    abortReason: () => "severed" as const,
+    abortReason: () => "killed" as const,
     bus,
     claudeBin: FAKE,
     ...over,
@@ -51,10 +51,10 @@ describe("claude-code engine", () => {
   it("streams tool calls, returns the summary, and never hands the child an API key", async () => {
     const { work, log, bin } = setup({ surgeon: [{ write: { path: "a.txt", content: "hi" } }, { bash: "node --test" }, { text: "Fixed it." }] });
     process.env.ANTHROPIC_API_KEY = "sk-should-not-pass";
-    const dir = join(work, "head");
+    const dir = join(work, "fork");
     writeTree(dir, { "README.md": "x" });
-    const { cfg, bus } = head(dir, { claudeBin: bin });
-    const res = await runClaudeCodeHead(cfg, claudeSettings({ dir, tmp: cfg.tmp, network: false }));
+    const { cfg, bus } = fork(dir, { claudeBin: bin });
+    const res = await runClaudeCodeFork(cfg, claudeSettings({ dir, tmp: cfg.tmp, network: false }));
     expect(res.reason).toBe("end_turn");
     expect(res.summary).toBe("Fixed it.");
     expect(res.costUsd).toBeNull();
@@ -75,25 +75,60 @@ describe("claude-code engine", () => {
     expect(settings.permissions.deny).toContain("Read(~/.ssh/**)");
   });
 
-  it("cuts a head off when it's severed", async () => {
+  it("cuts a fork off when it's killed", async () => {
     const { work, bin } = setup({ surgeon: [{ sleep: 10_000 }, { text: "too late" }] });
-    const dir = join(work, "head");
+    const dir = join(work, "fork");
     writeTree(dir, { "README.md": "x" });
-    const { cfg, ctl } = head(dir, { claudeBin: bin });
+    const { cfg, ctl } = fork(dir, { claudeBin: bin });
     setTimeout(() => ctl.abort(), 300);
     const t0 = performance.now();
-    const res = await runClaudeCodeHead(cfg, {});
-    expect(res.reason).toBe("severed");
+    const res = await runClaudeCodeFork(cfg, {});
+    expect(res.reason).toBe("killed");
     expect(performance.now() - t0).toBeLessThan(5000);
   });
 
   it("explains a login problem", async () => {
     const { work, bin } = setup({ surgeon: [{ error: "Failed to authenticate: OAuth session expired and could not be refreshed" }] });
-    const dir = join(work, "head");
+    const dir = join(work, "fork");
     writeTree(dir, { "README.md": "x" });
-    const res = await runClaudeCodeHead(head(dir, { claudeBin: bin }).cfg, {});
+    const res = await runClaudeCodeFork(fork(dir, { claudeBin: bin }).cfg, {});
     expect(res.reason).toBe("error");
     expect(res.error).toMatch(/claude auth login/);
+  });
+
+  it("denies every key file kept in ~, a dot-folder in ~ or the CLI home", () => {
+    const home = tempDir("cc-home");
+    writeTree(home, {
+      ".env": "A=1",
+      ".forkbomb/admin.env": "B=1",
+      ".forkbomb/runpod.env": "C=1",
+      ".forkbomb/canary.json": "{}",
+      ".othercli/.env": "D=1",
+      "projects/app/.env": "E=1",
+    });
+    const cliHome = join(tempDir("cc-cli-home"), "home");
+    writeTree(cliHome, { "hosted-test.env": "F=1", "runs/x/forks/1.01/.env": "G=1" });
+    const keys = keyFiles(home, cliHome);
+    expect(keys).toEqual(
+      [
+        join(home, ".env"),
+        join(home, ".forkbomb/admin.env"),
+        join(home, ".forkbomb/runpod.env"),
+        join(home, ".othercli/.env"),
+        join(cliHome, ".env"), // the CLI's own, listed before it exists
+        join(cliHome, "hosted-test.env"),
+      ].sort(),
+    );
+
+    const s = claudeSettings({ dir: "/w/fork", tmp: "/w/tmp", network: false, keys }) as {
+      sandbox: { filesystem: { denyRead: string[] } };
+      permissions: { deny: string[] };
+    };
+    for (const k of keys) {
+      expect(s.sandbox.filesystem.denyRead).toContain(`/${k}`);
+      expect(s.permissions.deny).toContain(`Read(/${k})`);
+      expect(s.permissions.deny).toContain(`Edit(/${k})`);
+    }
   });
 
   it("strips secrets from the child env", () => {
@@ -128,13 +163,13 @@ describe("claude-code engine", () => {
         repo,
         task: "fix",
         testCmd: "node --test",
-        heads: 3,
+        forks: 3,
         rounds: 1,
         mode: "race",
         claudeCode: { bin },
         effort: "low",
         maxTurns: 10,
-        headTimeoutMs: 30_000,
+        forkTimeoutMs: 30_000,
         bashTimeoutMs: 10_000,
         testTimeoutMs: 30_000,
         maxOutput: 10_000,
@@ -142,7 +177,7 @@ describe("claude-code engine", () => {
         sandbox: true,
         protect: DEFAULT_PROTECT,
         apply: false,
-        keepHeads: false,
+        keepForks: false,
         runsDir: tempDir("cc-runs"),
         concurrency: 8,
       },
@@ -152,6 +187,6 @@ describe("claude-code engine", () => {
     expect(res.winner).toBe("1.01");
     const start = bus.history.find((e) => e.type === "run_start");
     expect(start && start.type === "run_start" && start.engine).toBe("claude-code");
-    expect(bus.history.filter((e) => e.type === "sever")).toHaveLength(2);
+    expect(bus.history.filter((e) => e.type === "kill")).toHaveLength(2);
   });
 });

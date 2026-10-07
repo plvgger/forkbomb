@@ -11,7 +11,7 @@ export function RunTree({ compact = false, className }: { compact?: boolean; cla
   return (
     <ol
       className={cx("run-tree", compact && "run-tree--compact", className)}
-      aria-label={`End state of run ${RUN.id}: ${RUN.severed} forks killed, fork ${RUN.winner.id} exited 0 with ${RUN.winner.passed} of ${RUN.winner.total} tests passing`}
+      aria-label={`End state of run ${RUN.id}: ${RUN.killed} forks killed, fork ${RUN.winner.id} exited 0 with ${RUN.winner.passed} of ${RUN.winner.total} tests passing`}
     >
       <li className="run-tree__item run-tree__item--body">
         <div className="run-tree__card">
@@ -31,13 +31,13 @@ export function RunTree({ compact = false, className }: { compact?: boolean; cla
           )}
         </div>
       </li>
-      {RUN.heads.map((h) => {
-        const won = h.id === RUN.winner.id;
+      {RUN.forks.map((f) => {
+        const won = f.id === RUN.winner.id;
         return (
-          <li key={h.id} className={cx("run-tree__item run-tree__item--head", won ? "run-tree__item--won" : "run-tree__item--cut")}>
+          <li key={f.id} className={cx("run-tree__item run-tree__item--fork", won ? "run-tree__item--won" : "run-tree__item--cut")}>
             <div className="run-tree__card">
-              <span className="run-tree__id">{h.id}</span>
-              <span className="run-tree__name">{h.strategy}</span>
+              <span className="run-tree__id">{f.id}</span>
+              <span className="run-tree__name">{f.strategy}</span>
               <span className="run-tree__chip">{won ? "EXIT 0" : "KILLED"}</span>
               {!compact && (
                 <span className="run-tree__foot">

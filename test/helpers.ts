@@ -46,7 +46,7 @@ export function text(t: string): Block {
 export type Script = Array<BetaMessage | ((req: TurnRequest) => BetaMessage)>;
 
 /**
- * Scripted model: picks a script by the strategy named in the head's prompt
+ * Scripted model: picks a script by the strategy named in the fork's prompt
  * and plays it one turn at a time. `delayMs` simulates a slow model.
  */
 export class FakeModel implements ModelClient {

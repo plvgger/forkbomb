@@ -15,8 +15,8 @@ export interface Forker {
 }
 
 /**
- * APFS copy-on-write clones via clonefile(2): one syscall per head, every data
- * block shared with the parent until a head writes to it.
+ * APFS copy-on-write clones via clonefile(2): one syscall per fork, every data
+ * block shared with the parent until a fork writes to it.
  */
 export class ApfsForker implements Forker {
   readonly name = "apfs-clonefile";

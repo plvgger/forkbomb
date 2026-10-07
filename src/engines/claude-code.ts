@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { type Dirent, appendFileSync, mkdirSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { killGroup, track, untrack } from "../procs.js";
 import { createInterface } from "node:readline";
-import type { HeadResult } from "../agent.js";
-import { BRAND, LEGACY_SLUG } from "../brand.js";
+import type { ForkResult } from "../agent.js";
 import type { EventBus } from "../events.js";
+import { appHome } from "../util.js";
 
 /**
  * Fork engine that drives the Claude Code CLI in headless mode (`claude -p`).
@@ -12,7 +14,7 @@ import type { EventBus } from "../events.js";
  * subscription works without API credits. Claude Code's own sandbox and
  * permission rules seal each fork inside its clone; see claudeSettings().
  */
-export interface ClaudeCodeHeadConfig {
+export interface ClaudeCodeForkConfig {
   id: string;
   dir: string;
   tmp: string;
@@ -22,7 +24,7 @@ export interface ClaudeCodeHeadConfig {
   effort: string;
   network: boolean;
   signal: AbortSignal;
-  abortReason: () => "severed" | "timeout";
+  abortReason: () => "killed" | "timeout";
   bus: EventBus;
   claudeBin?: string;
   /** Append every raw stream-json line here (used by the canary). */
@@ -30,13 +32,13 @@ export interface ClaudeCodeHeadConfig {
 }
 
 /**
- * Places under ~ no head may read or edit: credentials, app data, shell
+ * Places under ~ no fork may read or edit: credentials, app data, shell
  * history, Claude Code's own config. Claude Code's file tools can't be put
  * behind an allowlist the way our own Seatbelt sandbox does it, so this list is
  * deliberately broad.
  */
 const SECRET_HOME = [
-  ".ssh", ".aws", ".gnupg", `.${BRAND.slug}/.env`, `.${LEGACY_SLUG}/.env`, ".docker", ".kube", ".netrc", ".npmrc", ".pypirc", ".git-credentials",
+  ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".netrc", ".npmrc", ".pypirc", ".git-credentials",
   ".config", ".gitconfig", ".claude", ".claude.json", ".cache",
   ".zsh_history", ".bash_history", ".zsh_sessions", ".python_history", ".node_repl_history", ".psql_history", ".mysql_history", ".lesshst", ".viminfo",
   "Library/Keychains", "Library/Application Support", "Library/Containers", "Library/Group Containers",
@@ -44,8 +46,36 @@ const SECRET_HOME = [
   "Desktop", "Documents", "Downloads",
 ];
 
+const isKeyFile = (name: string) => name === ".env" || name.endsWith(".env");
+
 /**
- * Settings handed to each head via --settings. Only keys from the published
+ * Key files no fork may read: every `.env` and `*.env` file directly in ~, in
+ * any dot-folder in ~ (where CLIs keep their keys), and in the CLI home, which
+ * <SLUG>_HOME can move out of ~. The CLI's own .env is listed even before it
+ * exists. Found by path when a fork starts, so one list serves both the Bash
+ * sandbox and the file-tool permission rules.
+ */
+export function keyFiles(home = homedir(), cliHome = appHome()): string[] {
+  const found = new Set([join(cliHome, ".env")]);
+  const list = (dir: string): Dirent[] => {
+    try {
+      return readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return []; // missing, or unreadable to us as well
+    }
+  };
+  const scan = (dir: string, entries = list(dir)) => {
+    for (const d of entries) if (isKeyFile(d.name)) found.add(join(dir, d.name));
+  };
+  const top = list(home);
+  scan(home, top);
+  for (const d of top) if (d.name.startsWith(".") && d.isDirectory()) scan(join(home, d.name));
+  scan(cliHome);
+  return [...found].sort();
+}
+
+/**
+ * Settings handed to each fork via --settings. Only keys from the published
  * Claude Code settings schema: in -p mode a settings block that fails
  * validation is silently ignored, so an unknown key could quietly turn the
  * sandbox off. The canary (canary.ts) proves these hold before any real run.
@@ -57,9 +87,9 @@ const SECRET_HOME = [
  *   them on credential folders and .git; acceptEdits only auto-approves edits
  *   inside the working directory, and nothing can prompt in -p mode.
  */
-export function claudeSettings(o: { dir: string; tmp: string; network: boolean; extraDeny?: string[] }): object {
+export function claudeSettings(o: { dir: string; tmp: string; network: boolean; keys?: string[]; extraDeny?: string[] }): object {
   const abs = (p: string) => `/${p}`; // "//abs/path" means an absolute path in Claude Code settings
-  const deny = [...SECRET_HOME.map((p) => `~/${p}`), ...(o.extraDeny ?? []).map(abs)];
+  const deny = [...SECRET_HOME.map((p) => `~/${p}`), ...(o.keys ?? keyFiles()).map(abs), ...(o.extraDeny ?? []).map(abs)];
   return {
     sandbox: {
       enabled: true,
@@ -147,7 +177,7 @@ function tidy(summary: string, dir: string): string {
   return summary.split(`${dir}/`).join("/workspace/").split(dir).join("/workspace");
 }
 
-export async function runClaudeCodeHead(cfg: ClaudeCodeHeadConfig, settings: object): Promise<HeadResult> {
+export async function runClaudeCodeFork(cfg: ClaudeCodeForkConfig, settings: object): Promise<ForkResult> {
   const args = [
     "-p",
     "--output-format",
@@ -213,9 +243,9 @@ export async function runClaudeCodeHead(cfg: ClaudeCodeHeadConfig, settings: obj
           pending.set(b.id, { ...d, summary: tidy(d.summary, cfg.dir), t0: performance.now() });
         } else if (b.type === "text" && b.text?.trim()) {
           summary = b.text.trim();
-          cfg.bus.emit({ type: "note", head: cfg.id, text: tidy(summary, cfg.dir).slice(0, 280) });
+          cfg.bus.emit({ type: "note", fork: cfg.id, text: tidy(summary, cfg.dir).slice(0, 280) });
         } else if (b.type === "thinking" && b.thinking?.trim()) {
-          cfg.bus.emit({ type: "note", head: cfg.id, text: b.thinking.trim().slice(0, 280) });
+          cfg.bus.emit({ type: "note", fork: cfg.id, text: b.thinking.trim().slice(0, 280) });
         }
       }
     } else if (e.type === "user") {
@@ -224,7 +254,7 @@ export async function runClaudeCodeHead(cfg: ClaudeCodeHeadConfig, settings: obj
         const p = pending.get(b.tool_use_id);
         if (!p) continue;
         pending.delete(b.tool_use_id);
-        cfg.bus.emit({ type: "tool", head: cfg.id, tool: p.tool, summary: p.summary, ok: !b.is_error, ms: Math.round(performance.now() - p.t0) });
+        cfg.bus.emit({ type: "tool", fork: cfg.id, tool: p.tool, summary: p.summary, ok: !b.is_error, ms: Math.round(performance.now() - p.t0) });
       }
     } else if (e.type === "result") {
       finalEvent = e;
@@ -245,7 +275,7 @@ export async function runClaudeCodeHead(cfg: ClaudeCodeHeadConfig, settings: obj
       child.stderr.destroy();
       done(c);
     };
-    // Don't let a straggler that kept the pipes open hold the head forever.
+    // Don't let a straggler that kept the pipes open hold the fork forever.
     child.on("exit", (c) => {
       killGroup(child.pid);
       grace = setTimeout(() => finish(c), 1500);

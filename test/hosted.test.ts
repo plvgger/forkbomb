@@ -12,7 +12,7 @@ import {
   checkBaseUrl,
   formatCredits,
   hostedSettings,
-  runHostedHead,
+  runHostedFork,
 } from "../src/engines/hosted.js";
 import { EventBus } from "../src/events.js";
 import { DEFAULT_PROTECT } from "../src/judge.js";
@@ -114,7 +114,7 @@ function reply(
 
 const apiError = (status: number, code: string, message: string): Reply => ({ status, body: { error: { message, type: code, code } } });
 
-/** Which turn of the conversation this request is, and which strategy the head was given. */
+/** Which turn of the conversation this request is, and which strategy the fork was given. */
 function turnOf(c: Call): { turn: number; strategy: string } {
   const user = String(c.body.messages.find((m) => m.role === "user")?.content ?? "");
   return {
@@ -123,7 +123,7 @@ function turnOf(c: Call): { turn: number; strategy: string } {
   };
 }
 
-function head(url: string, opts: { maxTurns?: number; retries?: number } = {}) {
+function fork(url: string, opts: { maxTurns?: number; retries?: number } = {}) {
   const root = tempDir("hosted");
   writeTree(root, REPO);
   const workspace = new Workspace({ root, tmp: `${root}-tmp`, network: false, gitWrite: false }, { bashTimeoutMs: 20_000, maxOutput: 10_000 });
@@ -139,7 +139,7 @@ function head(url: string, opts: { maxTurns?: number; retries?: number } = {}) {
     prompt: "Task: make the tests pass\nTest command: node --test\n\nYour strategy (surgeon): go",
     maxTurns: opts.maxTurns ?? 10,
     signal: ctl.signal,
-    abortReason: () => "severed" as const,
+    abortReason: () => "killed" as const,
     bus,
     apiSlots: new Semaphore(4),
     credit,
@@ -153,13 +153,13 @@ function options(repo: string, client: HostedClient, over: Partial<RunOptions> =
     repo,
     task: "make the tests pass",
     testCmd: "node --test",
-    heads: 2,
+    forks: 2,
     rounds: 1,
     mode: "race",
     hosted: client,
     effort: "medium",
     maxTurns: 10,
-    headTimeoutMs: 30_000,
+    forkTimeoutMs: 30_000,
     bashTimeoutMs: 20_000,
     testTimeoutMs: 30_000,
     maxOutput: 10_000,
@@ -167,7 +167,7 @@ function options(repo: string, client: HostedClient, over: Partial<RunOptions> =
     sandbox: true,
     protect: DEFAULT_PROTECT,
     apply: false,
-    keepHeads: false,
+    keepForks: false,
     runsDir: tempDir("hosted-runs"),
     concurrency: 8,
     ...over,
@@ -179,7 +179,7 @@ const fixMul = () => call("edit", { command: "str_replace", path: "/workspace/ma
 
 // ---------- tests ----------
 
-describe("hosted engine: one head", () => {
+describe("hosted engine: one fork", () => {
   it("views, edits and runs the tests in its sandboxed clone, then finishes", async () => {
     const script = [
       () => reply({ tool_calls: [call("edit", { command: "view", path: "/workspace/math.js" })] }),
@@ -189,8 +189,8 @@ describe("hosted engine: one head", () => {
       () => reply({ content: "Fixed sum and mul." }),
     ];
     const gw = await gateway((c) => script[turnOf(c).turn]!());
-    const { root, bus, cfg } = head(gw.url);
-    const res = await runHostedHead(cfg);
+    const { root, bus, cfg } = fork(gw.url);
+    const res = await runHostedFork(cfg);
 
     expect(res).toMatchObject({ reason: "end_turn", turns: 5, inputTokens: 500, outputTokens: 100, summary: "Fixed sum and mul." });
     expect(res.costUsd).toBeCloseTo(0.0075, 10);
@@ -249,8 +249,8 @@ describe("hosted engine: one head", () => {
       () => reply({ content: "Recovered." }),
     ];
     const gw = await gateway((c) => script[turnOf(c).turn]!());
-    const { bus, cfg } = head(gw.url);
-    const res = await runHostedHead(cfg);
+    const { bus, cfg } = fork(gw.url);
+    const res = await runHostedFork(cfg);
     expect(res.reason).toBe("end_turn");
     expect(res.summary).toBe("Recovered.");
 
@@ -277,7 +277,7 @@ describe("hosted engine: one head", () => {
   it("backs off and retries on 429, then carries on", async () => {
     let n = 0;
     const gw = await gateway(() => (++n <= 2 ? { ...apiError(429, "rate_limited", "slow down"), headers: { "retry-after": "0" } } : reply({ content: "ok" })));
-    const res = await runHostedHead(head(gw.url).cfg);
+    const res = await runHostedFork(fork(gw.url).cfg);
     expect(res.reason).toBe("end_turn");
     expect(gw.chats()).toHaveLength(3);
     expect(res.turns).toBe(1);
@@ -285,7 +285,7 @@ describe("hosted engine: one head", () => {
 
   it("gives up on 429 after the retry budget", async () => {
     const gw = await gateway(() => apiError(429, "rate_limited", "slow down"));
-    const res = await runHostedHead(head(gw.url, { retries: 2 }).cfg);
+    const res = await runHostedFork(fork(gw.url, { retries: 2 }).cfg);
     expect(res.reason).toBe("error");
     expect(res.error).toMatch(/rate limited by the hosted gateway after 2 retries/);
     expect(gw.chats()).toHaveLength(3);
@@ -302,8 +302,8 @@ describe("hosted engine: one head", () => {
     ];
     for (const [r, want] of cases) {
       const gw = await gateway(() => r);
-      const { cfg, credit } = head(gw.url);
-      const res = await runHostedHead(cfg);
+      const { cfg, credit } = fork(gw.url);
+      const res = await runHostedFork(cfg);
       expect(res.reason).toBe("error");
       expect(res.error).toMatch(want);
       expect(res.error).not.toContain(KEY);
@@ -318,14 +318,14 @@ describe("hosted engine: one head", () => {
     const busyNoHeader = apiError(503, "upstream_busy", "The hosted GPU pool is at capacity. Retry shortly.");
     let n = 0;
     const gw = await gateway(() => [busy, warming, busyNoHeader][n++] ?? reply({ content: "ok" }));
-    const res = await runHostedHead(head(gw.url).cfg);
+    const res = await runHostedFork(fork(gw.url).cfg);
     expect(res.reason).toBe("end_turn");
     expect(gw.chats()).toHaveLength(4);
   });
 
   it("gives up on a busy pool after the retry budget with advice that fits", async () => {
     const gw = await gateway(() => ({ ...apiError(503, "upstream_busy", "The hosted GPU pool is at capacity. Retry shortly."), headers: { "retry-after": "0" } }));
-    const res = await runHostedHead(head(gw.url, { retries: 2 }).cfg);
+    const res = await runHostedFork(fork(gw.url, { retries: 2 }).cfg);
     expect(res.reason).toBe("error");
     expect(res.error).toMatch(/hosted pool is at capacity after 2 retries \(upstream_busy: .*\)\. Try again shortly/);
     expect(res.error).not.toMatch(/not provisioned/);
@@ -335,41 +335,41 @@ describe("hosted engine: one head", () => {
   it("reports an unreachable gateway after retrying", async () => {
     const gw = await gateway(() => reply({ content: "never" }));
     for (const close of servers.splice(0)) close();
-    const res = await runHostedHead(head(gw.url, { retries: 2 }).cfg);
+    const res = await runHostedFork(fork(gw.url, { retries: 2 }).cfg);
     expect(res.reason).toBe("error");
     expect(res.error).toMatch(/can't reach the hosted gateway at 127\.0\.0\.1:\d+/);
   });
 
   it("doesn't call the gateway once the run is out of credit", async () => {
     const gw = await gateway(() => reply({ content: "should not be called" }));
-    const { cfg, credit } = head(gw.url);
+    const { cfg, credit } = fork(gw.url);
     credit.exhausted = "out of credit: burn $FORKBOMB to top up";
-    const res = await runHostedHead(cfg);
+    const res = await runHostedFork(cfg);
     expect(res).toMatchObject({ reason: "error", turns: 0, error: "out of credit: burn $FORKBOMB to top up" });
     expect(gw.chats()).toHaveLength(0);
   });
 
-  it("stops promptly when severed mid-request", async () => {
+  it("stops promptly when killed mid-request", async () => {
     const gw = await gateway(() => ({ ...reply({ content: "late" }), delayMs: 10_000 }));
-    const { cfg, ctl } = head(gw.url);
+    const { cfg, ctl } = fork(gw.url);
     setTimeout(() => ctl.abort(), 200);
     const t0 = performance.now();
-    const res = await runHostedHead(cfg);
-    expect(res.reason).toBe("severed");
+    const res = await runHostedFork(cfg);
+    expect(res.reason).toBe("killed");
     expect(performance.now() - t0).toBeLessThan(3000);
   });
 
   it("sums usage and reports cost as unknown when the gateway doesn't price a call", async () => {
     const script = [() => reply({ tool_calls: [call("bash", { command: "true" })] }), () => reply({ content: "done" }, "stop", null)];
     const gw = await gateway((c) => script[turnOf(c).turn]!());
-    const res = await runHostedHead(head(gw.url).cfg);
+    const res = await runHostedFork(fork(gw.url).cfg);
     expect(res).toMatchObject({ reason: "end_turn", inputTokens: 200, outputTokens: 40, costUsd: null });
   });
 
   it("redacts the key if a server ever echoes it back", async () => {
     const gw = await gateway(() => apiError(400, "bad_request", `bad header: Bearer ${KEY}`));
-    const { cfg, bus } = head(gw.url);
-    const res = await runHostedHead(cfg);
+    const { cfg, bus } = fork(gw.url);
+    const res = await runHostedFork(cfg);
     expect(res.error).toContain("[redacted]");
     expect(res.error).not.toContain(KEY);
     expect(JSON.stringify(bus.history)).not.toContain(KEY);
@@ -377,7 +377,7 @@ describe("hosted engine: one head", () => {
 });
 
 describe("hosted engine: whole runs", () => {
-  it("races hosted heads; the key never reaches a head's shell, an event or the run log", async () => {
+  it("races hosted forks; the key never reaches a fork's shell, an event or the run log", async () => {
     process.env[HOSTED_KEY_ENV] = KEY;
     const gw = await gateway((c) => {
       const { turn, strategy } = turnOf(c);
@@ -400,10 +400,10 @@ describe("hosted engine: whole runs", () => {
     expect(res.winner).toBe("1.01");
     const start = bus.history.find((e) => e.type === "run_start");
     expect(start).toMatchObject({ engine: "hosted", model: `hosted (127.0.0.1:${gw.port})` });
-    expect(bus.history.filter((e) => e.type === "sever").map((e) => e.type === "sever" && e.head)).toEqual(["1.02"]);
+    expect(bus.history.filter((e) => e.type === "kill").map((e) => e.type === "kill" && e.fork)).toEqual(["1.02"]);
     expect(res.costUsd).toBeCloseTo(0.0045, 10);
 
-    // The head ran `env` in its sandbox; the result went to the gateway without the key.
+    // The fork ran `env` in its sandbox; the result went to the gateway without the key.
     const envResult = gw.chats().find((c) => turnOf(c).strategy === "surgeon" && turnOf(c).turn === 1)!.body.messages.at(-1)!;
     expect(envResult.role).toBe("tool");
     expect(envResult.content).toContain("TMPDIR=");
@@ -414,22 +414,22 @@ describe("hosted engine: whole runs", () => {
     expect(readFileSync(join(runsDir, "events.jsonl"), "utf8")).not.toContain(KEY);
   });
 
-  it("stops the race cleanly when the first head hits 402", async () => {
+  it("stops the race cleanly when the first fork hits 402", async () => {
     const gw = await gateway(() => apiError(402, "insufficient_credits", "Insufficient credits: balance $0.000000"));
     const repo = tempDir("hosted-repo");
     writeTree(repo, REPO);
     const client = new HostedClient({ baseUrl: gw.url, apiKey: KEY, retryBaseMs: 1 });
     const bus = new EventBus();
-    const res = await runRace(options(repo, client, { heads: 3, rounds: 2, concurrency: 1 }), bus);
+    const res = await runRace(options(repo, client, { forks: 3, rounds: 2, concurrency: 1 }), bus);
 
     expect(res.ok).toBe(false);
     // One paid call found the balance empty; nobody else asked.
     expect(gw.chats()).toHaveLength(1);
-    const done = bus.history.filter((e) => e.type === "head_done");
+    const done = bus.history.filter((e) => e.type === "fork_done");
     expect(done).toHaveLength(3);
     for (const d of done) {
       expect(d).toMatchObject({ reason: "error" });
-      expect(d.type === "head_done" && d.error).toMatch(new RegExp(`^out of credit: burn \\$FORKBOMB to top up at http://127\\.0\\.0\\.1:${gw.port}/app`));
+      expect(d.type === "fork_done" && d.error).toMatch(new RegExp(`^out of credit: burn \\$FORKBOMB to top up at http://127\\.0\\.0\\.1:${gw.port}/app`));
     }
     // No second round.
     expect(bus.history.filter((e) => e.type === "fork")).toHaveLength(1);
@@ -445,22 +445,12 @@ describe("hosted settings and credits", () => {
     expect(HOSTED_KEY_ENV).toBe("FORKBOMB_API_KEY");
     expect(HOSTED_URL_ENV).toBe("FORKBOMB_HOSTED_URL");
     expect(hostedSettings({})).toEqual({ baseUrl: DEFAULT_HOSTED_URL, apiKey: null });
+    expect(hostedSettings({ FORKBOMB_HOSTED_URL: "", FORKBOMB_API_KEY: "  " })).toEqual({ baseUrl: DEFAULT_HOSTED_URL, apiKey: null });
     expect(DEFAULT_HOSTED_URL).toBe("https://forkbomb.fun/api/v1");
     expect(hostedSettings({ FORKBOMB_HOSTED_URL: " http://localhost:3000/api/v1 ", FORKBOMB_API_KEY: ` ${KEY} ` })).toEqual({
       baseUrl: "http://localhost:3000/api/v1",
       apiKey: KEY,
     });
-  });
-
-  it("still reads the pre-rename FORKBOMB_* names, after the new ones", () => {
-    const legacy = { FORKBOMB_HOSTED_URL: "http://localhost:3000/api/v1", FORKBOMB_API_KEY: "forkbomb_sk_old" };
-    expect(hostedSettings(legacy)).toEqual({ baseUrl: "http://localhost:3000/api/v1", apiKey: "forkbomb_sk_old" });
-    expect(hostedSettings({ ...legacy, FORKBOMB_API_KEY: KEY, FORKBOMB_HOSTED_URL: "https://example.com/api/v1" })).toEqual({
-      baseUrl: "https://example.com/api/v1",
-      apiKey: KEY,
-    });
-    // A blank new name doesn't hide a set old one.
-    expect(hostedSettings({ ...legacy, FORKBOMB_API_KEY: "  " }).apiKey).toBe("forkbomb_sk_old");
   });
 
   it("only sends the key over https, or plain http to this machine", () => {

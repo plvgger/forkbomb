@@ -161,21 +161,21 @@ export type CardCopy = {
   sub?: string;
 };
 
-export async function renderSocialCard({
-  kicker,
-  title = "Fork your coding agent. Keep the patch that passes.",
-  sub,
-}: CardCopy = {}) {
+/** The card as a PNG response. `size` defaults to the Open Graph size; GitHub's repo preview wants 1280×640. */
+export async function renderSocialCard(
+  { kicker, title = "Fork your coding agent. Keep the patch that passes.", sub }: CardCopy = {},
+  size: { width: number; height: number } = OG_SIZE,
+) {
   const fonts = await loadFonts();
   const stats: { t: string; c: string }[] = [
-    { t: `${RUN.heads.length} forks`, c: C.text },
-    { t: `${RUN.severed} killed`, c: C.signal },
+    { t: `${RUN.forks.length} forks`, c: C.text },
+    { t: `${RUN.killed} killed`, c: C.signal },
     { t: `${RUN.winner.passed}/${RUN.winner.total} tests`, c: C.ok },
     { t: `${RUN.durationS}s`, c: C.text },
   ];
   const subline =
     sub ??
-    `${BENCH.clonefile.perHeadMs} ms per fork vs ${BENCH.copy.perHeadMs.toLocaleString("en-US")} ms to copy. Open source, MIT, macOS.`;
+    `${BENCH.clonefile.perForkMs} ms per fork vs ${BENCH.copy.perForkMs.toLocaleString("en-US")} ms to copy. Open source, MIT, macOS.`;
   return new ImageResponse(
     <div
       style={{
@@ -341,6 +341,6 @@ export async function renderSocialCard({
         </div>
       </div>
     </div>,
-    { ...OG_SIZE, fonts },
+    { ...size, fonts },
   );
 }

@@ -8,7 +8,7 @@ import s from "./home.module.css";
  * Static without JS. When the wrapping <Reveal> adds .is-in, lines draw in.
  */
 
-const FORKS = RUN.heads;
+const FORKS = RUN.forks;
 const WIN = RUN.winner.id;
 
 /* ---------- Wide ---------- */
@@ -25,9 +25,9 @@ function Wide() {
     <svg className={`${s.diagram} ${s.diagramWide}`} viewBox="0 0 1120 410" role="img" aria-labelledby="det-wide-title det-wide-desc">
       <title id="det-wide-title">One detonation</title>
       <desc id="det-wide-desc">
-        pid 1, a snapshot of your repo, forks into four children: {FORKS.map((h) => `${h.id} ${h.strategy}`).join(", ")}. They
+        pid 1, a snapshot of your repo, forks into four children: {FORKS.map((f) => `${f.id} ${f.strategy}`).join(", ")}. They
         race. Fork {WIN} passes the judge first and exits 0 with all {RUN.winner.total} tests passing. The other{" "}
-        {RUN.severed} forks get SIGKILL. If no fork passes, the best one seeds the next round.
+        {RUN.killed} forks get SIGKILL. If no fork passes, the best one seeds the next round when it beats its parent.
       </desc>
 
       {/* next round loop: gate back to pid 1 */}
@@ -64,17 +64,17 @@ function Wide() {
         <tspan className={s.dIdx}>04</tspan> KILL
       </text>
 
-      {FORKS.map((h, i) => {
+      {FORKS.map((f, i) => {
         const y = W_Y[i];
-        const won = h.id === WIN;
+        const won = f.id === WIN;
         return (
-          <g key={h.id}>
+          <g key={f.id}>
             <rect className={won ? s.dForkWin : s.dForkCut} x="290" y={y - 21} width="162" height="42" rx="6" />
             <text className={s.dForkId} x="303" y={y + 5}>
-              {h.id}
+              {f.id}
             </text>
             <text className={s.dForkName} x="348" y={y + 5}>
-              {h.strategy}
+              {f.strategy}
             </text>
             <path
               className={`${won ? s.dLine : s.dLineMuted} ${s.dDraw}`}
@@ -176,17 +176,17 @@ function Tall() {
         <tspan className={s.dIdx}>04</tspan> KILL
       </text>
 
-      {FORKS.map((h, i) => {
+      {FORKS.map((f, i) => {
         const x = T_X[i];
-        const won = h.id === WIN;
+        const won = f.id === WIN;
         return (
-          <g key={h.id}>
+          <g key={f.id}>
             <rect className={won ? s.dForkWin : s.dForkCut} x={x - 34} y="120" width="68" height="34" rx="6" />
             <text className={s.dForkIdSm} x={x} y="142" textAnchor="middle">
-              {h.id}
+              {f.id}
             </text>
             <text className={`${s.dForkNameSm} ${s.dFade}`} transform={`translate(${x + 10} 166) rotate(90)`}>
-              {h.strategy}
+              {f.strategy}
             </text>
             <path
               className={`${won ? s.dLine : s.dLineMuted} ${s.dDraw}`}
