@@ -17,8 +17,9 @@ import { ApiError, json, readJsonObject } from "../http";
 import { authenticate } from "../keys";
 import { enforce } from "../ratelimit";
 import { BYTES_PER_TOKEN, generatedBytes, MAX_BODY_BYTES, parseChatRequest, readUsage, type ChatRequest, type Usage } from "./request";
+import { RunpodCall, type RunpodTimings } from "./runpod";
 import { sseComment, sseData, SseSplitter, type SseEvent } from "./sse";
-import { scrub, UpstreamCall, upstreamErrorMessage, type UpstreamTarget } from "./upstream";
+import { scrub, UpstreamCall, upstreamErrorMessage, type CallOptions, type UpstreamTarget } from "./upstream";
 
 export const HEADER_REMAINING = "x-credits-remaining-usd";
 export const HEADER_COST = "x-request-cost-usd";
@@ -41,6 +42,8 @@ export type GatewayOptions = {
   retryDelayMs?: number;
   /** When the request started (ms since epoch). Defaults to when chatCompletions was called. */
   startedAt?: number;
+  /** RunPod queue polling and keep-alive timings (tests shorten them). */
+  runpod?: Partial<RunpodTimings>;
 };
 export const GATEWAY_DEFAULTS = { timeoutMs: (ROUTE_MAX_DURATION_S - SETTLE_MARGIN_S) * 1000, retryDelayMs: 2_000 };
 
@@ -73,16 +76,18 @@ export async function chatCompletions(req: Request, options: GatewayOptions = {}
   }
 
   const meter = new Meter(rsv, cfg, chat.estimatedInputTokens);
-  const target: UpstreamTarget = { baseUrl: cfg.upstream.baseUrl, apiKey: cfg.upstream.apiKey };
+  const target: UpstreamTarget = { baseUrl: cfg.upstream.baseUrl, apiKey: cfg.upstream.apiKey, model: cfg.upstream.model };
   // Non-streaming calls run to completion even if the client leaves, so usage is always real.
-  // Streaming calls stop the GPU as soon as the client leaves and bill what was streamed.
+  // Streaming calls stop the GPU as soon as the client leaves and bill what was streamed
+  // (on RunPod's queue by cancelling the job: its OpenAI route would keep generating).
   // Auth, rate limit, body and reserve already used part of the budget: upstream gets only what is left.
-  const call = new UpstreamCall(target, {
+  const callOpts: CallOptions = {
     timeoutMs: Math.max(1, opts.timeoutMs - (Date.now() - startedAt)),
     budgetMs: opts.timeoutMs,
     retryDelayMs: opts.retryDelayMs,
     clientSignal: chat.stream ? req.signal : undefined,
-  });
+  };
+  const call = cfg.upstream.transport === "runpod" ? new RunpodCall(target, callOpts, opts.runpod) : new UpstreamCall(target, callOpts);
   const upstreamBody = {
     ...chat.body,
     model: cfg.upstream.model,

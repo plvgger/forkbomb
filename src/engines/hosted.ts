@@ -3,6 +3,7 @@ import { BRAND, DEFAULT_HOSTED_URL, HOSTED_KEY_ENV, HOSTED_URL_ENV } from "../br
 import type { EventBus } from "../events.js";
 import type { ToolOutcome, Workspace } from "../tools.js";
 import type { Semaphore } from "../util.js";
+import { ChatAssembler, HEADER_COST, HEADER_REMAINING, SseParser, errorFields } from "./hosted-stream.js";
 
 /**
  * Fork engine that runs on hosted compute: an OpenAI-compatible Chat
@@ -43,6 +44,8 @@ export interface ChatTurn {
   completion: ChatCompletion;
   /** What the gateway charged for this call (x-request-cost-usd), or null if it didn't say. */
   costUsd: number | null;
+  /** Spendable balance after this call (x-credits-remaining-usd), or null if the gateway didn't say. */
+  remainingUsd: number | null;
 }
 
 export interface HostedMe {
@@ -107,6 +110,9 @@ export const HOSTED_TOOLS = [
 export type HostedErrorKind = "credits" | "auth" | "rate" | "unavailable" | "network" | "http" | "bad_response";
 
 export class HostedError extends Error {
+  /** What the gateway still charged for the failed call: a stream that fails midway is billed for what it generated. */
+  costUsd: number | null = null;
+
   constructor(
     readonly kind: HostedErrorKind,
     readonly status: number,
@@ -154,12 +160,14 @@ function siteOf(base: URL): string {
 export interface HostedClientOptions {
   baseUrl: string;
   apiKey: string;
-  /** Retries for 429, 5xx, a transient 503 (busy or warming up) and network errors. Default 4. */
+  /** Retries for 429, 5xx, a transient 503 (busy or warming up), network errors and refunded streams (see request). Default 4. */
   maxRetries?: number;
   /** First backoff step; doubles each retry. Default 1000 ms. */
   retryBaseMs?: number;
-  /** Per-request ceiling. Default 10 minutes. */
+  /** Per-request ceiling, streamed body included. Default 10 minutes. */
   requestTimeoutMs?: number;
+  /** After a mid-stream error, how long to wait for the gateway's settlement of the failed call. Default 2000 ms. */
+  errorGraceMs?: number;
 }
 
 const RETRYABLE = new Set([429, 500, 502, 504]);
@@ -181,6 +189,7 @@ export class HostedClient implements HostedChat {
   private readonly maxRetries: number;
   private readonly retryBaseMs: number;
   private readonly requestTimeoutMs: number;
+  private readonly errorGraceMs: number;
 
   constructor(o: HostedClientOptions) {
     const u = checkBaseUrl(o.baseUrl);
@@ -192,22 +201,36 @@ export class HostedClient implements HostedChat {
     this.maxRetries = o.maxRetries ?? 4;
     this.retryBaseMs = o.retryBaseMs ?? 1000;
     this.requestTimeoutMs = o.requestTimeoutMs ?? 600_000;
+    this.errorGraceMs = o.errorGraceMs ?? 2000;
   }
 
+  /**
+   * One model turn, streamed. Streaming is what makes a kill cheap: aborting `signal` drops the connection
+   * mid-answer, and the gateway stops the GPU and bills only what was streamed. A non-streaming call runs to
+   * completion upstream and is billed in full, even after the fork that asked is gone.
+   */
   async chat(req: ChatRequest, signal: AbortSignal): Promise<ChatTurn> {
     // The server picks the model; "hosted" just says "whatever you serve".
-    const body = { model: "hosted", messages: req.messages, tools: req.tools, tool_choice: "auto", stream: false };
-    const { json, headers } = await this.request("POST", "/chat/completions", body, signal);
-    const completion = json as ChatCompletion;
-    if (!completion || !Array.isArray(completion.choices)) throw new HostedError("bad_response", 200, "the hosted gateway returned a response without choices");
-    const raw = headers.get("x-request-cost-usd");
-    const cost = raw === null ? Number.NaN : Number(raw);
-    return { completion, costUsd: Number.isFinite(cost) && cost >= 0 ? cost : null };
+    const body = {
+      model: "hosted",
+      messages: req.messages,
+      tools: req.tools,
+      tool_choice: "auto",
+      stream: true,
+      stream_options: { include_usage: true },
+    };
+    return this.request(
+      "POST",
+      "/chat/completions",
+      body,
+      signal,
+      (res, live) => (isEventStream(res) ? this.readStream(res, live, signal) : readCompletion(res)),
+      "text/event-stream",
+    );
   }
 
   async me(signal?: AbortSignal): Promise<HostedMe> {
-    const { json } = await this.request("GET", "/me", undefined, signal ?? new AbortController().signal);
-    const me = json as HostedMe;
+    const me = (await this.request("GET", "/me", undefined, signal ?? new AbortController().signal, readJson)) as HostedMe;
     if (!me?.workspace?.id || typeof me.credits?.balanceMicroUsd !== "number") {
       throw new HostedError("bad_response", 200, "the hosted gateway returned an unexpected /me response");
     }
@@ -219,21 +242,36 @@ export class HostedClient implements HostedChat {
     return this.#key ? s.split(this.#key).join("[redacted]") : s;
   }
 
-  private async request(method: string, path: string, body: unknown, signal: AbortSignal): Promise<{ json: unknown; headers: Headers }> {
+  /**
+   * Sends one request, retrying what is worth retrying, and hands a 2xx response to `read`. Once the gateway
+   * answers 2xx it has reserved credit and started the model, so a body that fails partway is never sent again.
+   * The one exception is a stream the gateway refunded in full before the model produced anything (`Refunded`):
+   * that is retried like the HTTP 503 or 504 it would have been had the headers not gone out yet.
+   */
+  private async request<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+    read: (res: Response, live: AbortSignal) => Promise<T>,
+    accept = "application/json",
+  ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     for (let attempt = 0; ; attempt++) {
       if (signal.aborted) throw stopped(signal);
+      // The caller's signal or this attempt's ceiling, whichever fires first; it covers the body as well.
+      const live = AbortSignal.any([signal, AbortSignal.timeout(this.requestTimeoutMs)]);
       let res: Response;
       try {
         res = await fetch(url, {
           method,
           headers: {
             authorization: `Bearer ${this.#key}`,
-            accept: "application/json",
+            accept,
             ...(body === undefined ? {} : { "content-type": "application/json" }),
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-          signal: AbortSignal.any([signal, AbortSignal.timeout(this.requestTimeoutMs)]),
+          signal: live,
           redirect: "error",
         });
       } catch (e) {
@@ -242,17 +280,21 @@ export class HostedClient implements HostedChat {
           await sleep(this.backoff(attempt), signal);
           continue;
         }
-        const cause = (e as { cause?: { code?: string; message?: string } }).cause;
-        const why = cause?.code ?? cause?.message ?? (e as Error).message;
-        throw new HostedError("network", 0, this.redact(`can't reach the hosted gateway at ${new URL(url).host} (${why})`));
+        throw new HostedError("network", 0, this.redact(`can't reach the hosted gateway at ${new URL(url).host} (${why(e)})`));
       }
 
       if (res.ok) {
-        const text = await res.text();
         try {
-          return { json: JSON.parse(text) as unknown, headers: res.headers };
-        } catch {
-          throw new HostedError("bad_response", res.status, "the hosted gateway returned invalid JSON");
+          return await read(res, live);
+        } catch (e) {
+          if (!(e instanceof Refunded)) throw e;
+          if (attempt < this.maxRetries) {
+            await sleep(this.backoff(attempt), signal);
+            continue;
+          }
+          const err = this.toError(e.status, e.failure, attempt, true);
+          err.costUsd = 0;
+          throw err;
         }
       }
 
@@ -264,6 +306,93 @@ export class HostedClient implements HostedChat {
       }
       throw this.toError(res.status, err, attempt, transient);
     }
+  }
+
+  /**
+   * Reads the gateway's server-sent events into one turn. An abort cancels the pending read at once rather
+   * than at the next chunk, so a killed fork's connection closes immediately and the gateway sees it go.
+   */
+  private async readStream(res: Response, live: AbortSignal, signal: AbortSignal): Promise<ChatTurn> {
+    const reader = (res.body ?? new Response("").body!).getReader();
+    const decoder = new TextDecoder();
+    const sse = new SseParser();
+    const chat = new ChatAssembler();
+    let halt: (reason: unknown) => void = () => {};
+    const halted = new Promise<never>((_, fail) => (halt = fail));
+    halted.catch(() => {});
+    const onAbort = () => {
+      halt(live.reason);
+      reader.cancel().catch(() => {});
+    };
+    const fail = (e: unknown): Error => {
+      if (signal.aborted) return stopped(signal);
+      if (live.aborted) return new HostedError("network", 0, `the hosted gateway didn't finish answering within ${Math.round(this.requestTimeoutMs / 1000)}s`);
+      return new HostedError("network", 0, this.redact(`the hosted gateway stream broke off (${why(e)})`));
+    };
+    if (live.aborted) onAbort();
+    else live.addEventListener("abort", onAbort, { once: true });
+    // A mid-stream error is still billed for what was generated, and the gateway settles it just after the
+    // error event. Read on briefly for that settlement, then hang up even if the server doesn't.
+    let failure: ReturnType<ChatAssembler["event"]> = null;
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    try {
+      for (let ended = false; !ended && !chat.done && !(failure && chat.costUsd !== null); ) {
+        let read: ReadableStreamReadResult<Uint8Array>;
+        try {
+          read = await Promise.race([reader.read(), halted]);
+        } catch (e) {
+          if (failure && !live.aborted) break; // no settlement within the grace
+          throw fail(e);
+        }
+        // A cancelled reader reads as a clean end: the signal says whether it was one.
+        if (live.aborted) throw fail(live.reason);
+        ended = read.done;
+        const text = read.done ? decoder.decode() : decoder.decode(read.value, { stream: true });
+        for (const item of ended ? [...sse.push(text), ...sse.end()] : sse.push(text)) {
+          if ("comment" in item) {
+            chat.comment(item.comment);
+            continue;
+          }
+          const err = chat.event(item.data);
+          if (err && !failure) {
+            failure = err;
+            grace = setTimeout(() => halt(new Error("no settlement")), this.errorGraceMs);
+          }
+          if (chat.done) break;
+        }
+      }
+    } finally {
+      clearTimeout(grace);
+      live.removeEventListener("abort", onAbort);
+      // After [DONE] the server ends the body on its own, and leaving that to it keeps the connection
+      // reusable for the next turn (the ceiling still bounds one that never ends). Any other early stop
+      // (an error event, an abort) hangs up.
+      if (chat.done && !failure) reader.releaseLock();
+      else reader.cancel().catch(() => {});
+    }
+    if (failure) {
+      // Mid-stream errors read like the HTTP error they stand for. The gateway sends its headers after a few seconds
+      // without output, to hold the connection through a cold start, so a job still queued when its time ran out, or
+      // a pool busy or warming up, arrives here instead of as an HTTP 503 or 504. Refunded in full with nothing
+      // produced, it is retried like one; anything the model produced was billed, and is never sent again.
+      const status = statusOf(failure);
+      if (chat.costUsd === 0 && !chat.generated && (RETRYABLE.has(status) || status === 503)) throw new Refunded(status, failure);
+      const err = this.toError(status, failure, 0, true);
+      err.costUsd = chat.costUsd;
+      throw err;
+    }
+    // An answer is whole only once it says why it stopped. [DONE] alone does not make it so: the gateway ends every
+    // stream with one, even when its upstream broke off mid-answer. A stream with no answer at all ends below as "no choices".
+    if (!chat.finished && (chat.started || !chat.done)) {
+      const err = new HostedError("network", 0, "the hosted gateway stream ended before the answer was complete");
+      err.costUsd = chat.costUsd;
+      throw err;
+    }
+    return {
+      completion: chat.completion(),
+      costUsd: chat.costUsd ?? usdHeader(res.headers, HEADER_COST, 0),
+      remainingUsd: chat.remainingUsd ?? usdHeader(res.headers, HEADER_REMAINING),
+    };
   }
 
   private backoff(attempt: number): number {
@@ -304,18 +433,71 @@ export class HostedClient implements HostedChat {
   }
 }
 
+/** A streamed call that failed before the model produced anything, and that the gateway refunded in full. request() sends it again. */
+class Refunded extends Error {
+  constructor(
+    readonly status: number,
+    readonly failure: { message: string; code: string },
+  ) {
+    super(failure.message);
+  }
+}
+
 async function readError(res: Response): Promise<{ message: string; code: string }> {
   const text = await res.text().catch(() => "");
   try {
-    const j = JSON.parse(text) as { error?: { message?: unknown; code?: unknown; type?: unknown } };
-    const e = j.error ?? {};
-    return {
-      message: typeof e.message === "string" ? e.message : "",
-      code: typeof e.code === "string" ? e.code : typeof e.type === "string" ? e.type : "",
-    };
+    return errorFields(JSON.parse(text)) ?? { message: "", code: "" };
   } catch {
     return { message: text.slice(0, 300), code: "" };
   }
+}
+
+async function readJson(res: Response): Promise<unknown> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new HostedError("bad_response", res.status, "the hosted gateway returned invalid JSON");
+  }
+}
+
+/** A server that ignored stream: true and answered with one JSON completion: take it as it is. */
+async function readCompletion(res: Response): Promise<ChatTurn> {
+  const completion = (await readJson(res)) as ChatCompletion;
+  if (!completion || !Array.isArray(completion.choices)) throw new HostedError("bad_response", 200, "the hosted gateway returned a response without choices");
+  return { completion, costUsd: usdHeader(res.headers, HEADER_COST, 0), remainingUsd: usdHeader(res.headers, HEADER_REMAINING) };
+}
+
+const isEventStream = (res: Response) => /^text\/event-stream\b/i.test(res.headers.get("content-type") ?? "");
+
+/** A mid-stream error event carries no HTTP status: recover the one the gateway would have answered with. */
+function statusOf(err: { code: string; type: string }): number {
+  switch (err.type) {
+    case "authentication_error":
+      return 401;
+    case "billing_error":
+      return 402;
+    case "rate_limit_error":
+      return 429;
+    case "invalid_request_error":
+      return 400;
+  }
+  if (err.code === "upstream_busy" || err.code === "upstream_unavailable") return 503;
+  if (err.code === "upstream_timeout") return 504;
+  return 502;
+}
+
+/** A USD amount from a header, or null if it is missing, not a number, or below `min`. */
+function usdHeader(h: Headers, name: string, min = Number.NEGATIVE_INFINITY): number | null {
+  const raw = h.get(name);
+  const n = raw === null ? Number.NaN : Number(raw);
+  return Number.isFinite(n) && n >= min ? n : null;
+}
+
+/** The most specific reason a fetch or a body read failed (ECONNRESET beats "fetch failed"). */
+function why(e: unknown): string {
+  const cause = (e as { cause?: { code?: string; message?: string } } | null)?.cause;
+  return cause?.code ?? cause?.message ?? (e as Error | null)?.message ?? String(e);
 }
 
 function retryAfterMs(h: Headers): number | null {
@@ -475,6 +657,7 @@ export async function runHostedFork(cfg: HostedForkConfig): Promise<ForkResult> 
   } catch (e) {
     if (signal.aborted) return finish(cfg.abortReason());
     if (e instanceof HostedError) {
+      if (cost !== null && e.costUsd !== null) cost += e.costUsd;
       if (e.kind === "credits" && !credit.exhausted) credit.exhausted = clean(e.message);
       return finish("error", e.message);
     }

@@ -112,10 +112,12 @@ export function readUsage(raw: unknown): Usage | null {
 /** Bytes of generated text in a message or a stream delta: content, reasoning, tool call names and arguments. */
 export function generatedBytes(msg: unknown): number {
   if (!msg || typeof msg !== "object") return 0;
-  const m = msg as { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown };
+  const m = msg as { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: unknown };
   let n = 0;
   if (typeof m.content === "string") n += utf8Bytes(m.content);
-  if (typeof m.reasoning_content === "string") n += utf8Bytes(m.reasoning_content);
+  // Newer vLLM names it "reasoning"; count one of the two, in case a server sends both.
+  const reasoning = typeof m.reasoning_content === "string" ? m.reasoning_content : m.reasoning;
+  if (typeof reasoning === "string") n += utf8Bytes(reasoning);
   if (Array.isArray(m.tool_calls)) {
     for (const call of m.tool_calls) {
       const fn = (call as { function?: { name?: unknown; arguments?: unknown } } | null)?.function;

@@ -2,13 +2,16 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { type IncomingHttpHeaders, createServer } from "node:http";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { systemPrompt } from "../src/agent.js";
 import { DEFAULT_HOSTED_URL, HOME_ENV, HOSTED_KEY_ENV, HOSTED_URL_ENV } from "../src/brand.js";
 import {
   type ChatCompletion,
+  type ChatRequest,
   type CreditGate,
+  HOSTED_TOOLS,
   HostedClient,
+  HostedError,
   checkBaseUrl,
   formatCredits,
   hostedSettings,
@@ -45,12 +48,20 @@ interface Call {
   auth: string | undefined;
   headers: IncomingHttpHeaders;
   body: { model?: string; messages: Msg[]; tools?: Array<{ function: { name: string } }> } & Record<string, unknown>;
+  /** Resolves (with performance.now()) when the connection closes, answered or not. */
+  closed: Promise<number>;
+  /** The client's port: the same port on two calls means one reused connection. */
+  socket: number | undefined;
 }
 interface Reply {
   status?: number;
   body: unknown;
   headers?: Record<string, string>;
   delayMs?: number;
+  /** Raw server-sent events, written one piece at a time, in place of `body`. */
+  sse?: string[];
+  /** Leave the stream open after the last piece, like a model still generating. */
+  hang?: boolean;
 }
 
 const servers: Array<() => void> = [];
@@ -71,11 +82,27 @@ async function gateway(handler: (call: Call) => Reply | Promise<Reply>) {
         auth: req.headers.authorization,
         headers: req.headers,
         body: raw ? JSON.parse(raw) : { messages: [] },
+        closed: new Promise((done) => res.on("close", () => done(performance.now()))),
+        socket: req.socket.remotePort,
       };
       calls.push(call);
       const r = await handler(call);
       if (r.delayMs) await new Promise((d) => setTimeout(d, r.delayMs));
       if (res.destroyed) return;
+      // A streaming request gets its completion as the gateway streams it; errors stay plain JSON.
+      const sse = r.sse ?? (call.body.stream === true && (r.status ?? 200) < 300 ? toSse(r.body as ChatCompletion, r.headers?.["x-request-cost-usd"]) : null);
+      if (sse) {
+        const { "x-request-cost-usd": _, ...headers } = r.headers ?? {};
+        res.writeHead(r.status ?? 200, { "content-type": "text/event-stream; charset=utf-8", "x-credits-remaining-usd": "4.200000", ...headers });
+        for (const [i, piece] of sse.entries()) {
+          if (res.destroyed) return;
+          // Like the gateway, the last piece and the end of the body go out together.
+          if (i === sse.length - 1 && !r.hang) return void res.end(piece);
+          res.write(piece);
+          await new Promise((d) => setImmediate(d));
+        }
+        return;
+      }
       res.writeHead(r.status ?? 200, { "content-type": "application/json", ...r.headers }).end(JSON.stringify(r.body));
     });
   });
@@ -113,6 +140,34 @@ function reply(
 }
 
 const apiError = (status: number, code: string, message: string): Reply => ({ status, body: { error: { message, type: code, code } } });
+
+/** One chat.completion.chunk event, shaped like the pool's. */
+const chunk = (delta: object, finish: string | null = null) =>
+  `data: ${JSON.stringify({ id: "chatcmpl-1", object: "chat.completion.chunk", model: "forkbomb-hosted", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+const usageChunk = (prompt = 100, completion = 20) =>
+  `data: ${JSON.stringify({ id: "chatcmpl-1", object: "chat.completion.chunk", model: "forkbomb-hosted", choices: [], usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion } })}\n\n`;
+const settled = (cost: string, remaining = "4.200000") => `: x-request-cost-usd=${cost} x-credits-remaining-usd=${remaining}\n\n`;
+const streamError = (type: string, code: string, message: string) => `data: ${JSON.stringify({ error: { message, type, code } })}\n\n`;
+
+/**
+ * A completion as the gateway streams it: role, content in two pieces, each tool call (id and name first,
+ * then its arguments in two pieces), finish, usage, the settled cost as a comment (when priced), [DONE].
+ */
+function toSse(c: ChatCompletion, cost: string | undefined): string[] {
+  const choice = c.choices[0]!;
+  const m = choice.message;
+  const halves = (s: string) => [s.slice(0, Math.ceil(s.length / 2)), s.slice(Math.ceil(s.length / 2))];
+  const out = [chunk({ role: "assistant", content: "" }), ": keep-alive\n\n"];
+  if (m.content) for (const piece of halves(m.content)) out.push(chunk({ content: piece }));
+  (m.tool_calls ?? []).forEach((t, index) => {
+    out.push(chunk({ tool_calls: [{ index, ...(t.id ? { id: t.id } : {}), type: "function", function: { name: t.function?.name } }] }));
+    for (const piece of halves(t.function?.arguments ?? "")) out.push(chunk({ tool_calls: [{ index, function: { arguments: piece } }] }));
+  });
+  out.push(chunk({}, choice.finish_reason), usageChunk(c.usage?.prompt_tokens, c.usage?.completion_tokens));
+  if (cost !== undefined) out.push(settled(cost));
+  out.push("data: [DONE]\n\n");
+  return out;
+}
 
 /** Which turn of the conversation this request is, and which strategy the fork was given. */
 function turnOf(c: Call): { turn: number; strategy: string } {
@@ -199,8 +254,12 @@ describe("hosted engine: one fork", () => {
     const chats = gw.chats();
     expect(chats).toHaveLength(5);
     for (const c of chats) expect(c.auth).toBe(`Bearer ${KEY}`);
+    // Streams end cleanly, so turns reuse the connection (one sent the instant the last ended may open another).
+    expect(new Set(chats.map((c) => c.socket)).size).toBeLessThan(chats.length);
     expect(chats[0]!.body.model).toBe("hosted");
-    expect(chats[0]!.body.stream).toBe(false);
+    expect(chats[0]!.body.stream).toBe(true);
+    expect(chats[0]!.body.stream_options).toEqual({ include_usage: true });
+    expect(chats[0]!.headers.accept).toBe("text/event-stream");
     expect(chats[0]!.body.tools?.map((t) => t.function.name)).toEqual(["bash", "edit"]);
     expect(chats[0]!.body.messages[0]).toMatchObject({ role: "system" });
     expect(chats[0]!.body.messages[0]!.content).toContain("Give it paths under /workspace");
@@ -359,6 +418,56 @@ describe("hosted engine: one fork", () => {
     expect(performance.now() - t0).toBeLessThan(3000);
   });
 
+  it("stops promptly when killed mid-stream, and the gateway sees the connection close at once (regression)", async () => {
+    // The answer starts streaming, then the model keeps generating: a killed fork must hang up, not wait.
+    const gw = await gateway(() => ({ body: null, sse: [chunk({ role: "assistant", content: "" }), chunk({ content: "Let me look" })], hang: true }));
+    const { cfg, ctl } = fork(gw.url);
+    let killedAt = 0;
+    setTimeout(() => {
+      killedAt = performance.now();
+      ctl.abort();
+    }, 200);
+    const res = await runHostedFork(cfg);
+    expect(res.reason).toBe("killed");
+    expect(performance.now() - killedAt).toBeLessThan(500);
+    const closedAt = await gw.chats()[0]!.closed;
+    expect(closedAt - killedAt).toBeLessThan(500);
+  });
+
+  it("gets through a cold start the gateway timed out after its headers went out: refunded in full, so the turn goes again", async () => {
+    // The first turn's job sat in the GPU queue past the gateway's budget. By the retry a worker is warm.
+    const coldStart: Reply = { body: null, sse: [": keep-alive\n\n", streamError("server_error", "upstream_timeout", "The hosted model did not finish within 280s.") + settled("0.000000")], hang: true };
+    let turns = 0;
+    const gw = await gateway(() => (++turns === 1 ? coldStart : reply({ content: "Nothing left to fix." }, "stop", "0.000100")));
+    const { cfg } = fork(gw.url);
+    const res = await runHostedFork(cfg);
+    expect(res).toMatchObject({ reason: "end_turn", turns: 1, summary: "Nothing left to fix." });
+    expect(res.costUsd).toBeCloseTo(0.0001, 10);
+    expect(gw.chats()).toHaveLength(2);
+  });
+
+  it("maps a mid-stream error like the HTTP error it stands for, without retrying it", async () => {
+    const cases: Array<[string, RegExp, boolean]> = [
+      [streamError("server_error", "upstream_error", `The hosted model failed mid-stream (Bearer ${KEY}).`), /^hosted gateway error 502 upstream_error: The hosted model failed mid-stream \(Bearer \[redacted\]\)\.$/, false],
+      [streamError("server_error", "upstream_timeout", "The hosted model did not finish within 280s."), /^hosted gateway error 504 upstream_timeout: The hosted model did not finish within 280s\.$/, false],
+      [streamError("billing_error", "insufficient_credits", "Insufficient credits"), /^out of credit: burn \$FORKBOMB to top up at http:\/\/127\.0\.0\.1:\d+\/app \(Insufficient credits\)$/, true],
+    ];
+    for (const [event, want, outOfCredit] of cases) {
+      const gw = await gateway(() => ({ body: null, sse: [chunk({ role: "assistant", content: "" }), chunk({ content: "partial" }), event, settled("0.000010")], hang: true }));
+      const { cfg, credit, bus } = fork(gw.url);
+      const res = await runHostedFork(cfg);
+      expect(res).toMatchObject({ reason: "error", turns: 1 });
+      expect(res.error).toMatch(want);
+      expect(JSON.stringify(bus.history)).not.toContain(KEY);
+      expect(gw.chats()).toHaveLength(1);
+      expect(credit.exhausted !== null).toBe(outOfCredit);
+      // The failed call was still billed for what it generated, and the fork's cost says so.
+      expect(res.costUsd).toBeCloseTo(0.00001, 10);
+      // Reading stopped at the settlement: the connection is gone even though the server never closed it.
+      await gw.chats()[0]!.closed;
+    }
+  });
+
   it("sums usage and reports cost as unknown when the gateway doesn't price a call", async () => {
     const script = [() => reply({ tool_calls: [call("bash", { command: "true" })] }), () => reply({ content: "done" }, "stop", null)];
     const gw = await gateway((c) => script[turnOf(c).turn]!());
@@ -381,7 +490,8 @@ describe("hosted engine: whole runs", () => {
     process.env[HOSTED_KEY_ENV] = KEY;
     const gw = await gateway((c) => {
       const { turn, strategy } = turnOf(c);
-      if (strategy !== "surgeon") return { ...reply({ content: "slow" }), delayMs: 8000 };
+      // The other fork's first answer streams a little, then the model keeps going until someone hangs up.
+      if (strategy !== "surgeon") return { body: null, sse: [chunk({ role: "assistant", content: "" }), chunk({ reasoning: "Thinking..." })], hang: true };
       const script = [
         () => reply({ tool_calls: [call("bash", { command: "env" })] }),
         () => reply({ tool_calls: [fixSum(), fixMul()] }),
@@ -402,6 +512,11 @@ describe("hosted engine: whole runs", () => {
     expect(start).toMatchObject({ engine: "hosted", model: `hosted (127.0.0.1:${gw.port})` });
     expect(bus.history.filter((e) => e.type === "kill").map((e) => e.type === "kill" && e.fork)).toEqual(["1.02"]);
     expect(res.costUsd).toBeCloseTo(0.0045, 10);
+    // Killing 1.02 hung up its stream, which is what tells the gateway to stop the GPU.
+    const slow = gw.chats().filter((c) => turnOf(c).strategy !== "surgeon");
+    expect(slow).toHaveLength(1);
+    const open = new Promise((done) => setTimeout(() => done("still open"), 2000));
+    expect(await Promise.race([slow[0]!.closed, open])).toEqual(expect.any(Number));
 
     // The fork ran `env` in its sandbox; the result went to the gateway without the key.
     const envResult = gw.chats().find((c) => turnOf(c).strategy === "surgeon" && turnOf(c).turn === 1)!.body.messages.at(-1)!;
@@ -437,6 +552,307 @@ describe("hosted engine: whole runs", () => {
     expect(logs).toHaveLength(1);
     expect(bus.history.at(-1)?.type).toBe("run_end");
     expect(JSON.stringify(bus.history)).not.toContain(KEY);
+  });
+});
+
+// ---------- the streaming client against a mocked fetch: exact chunk boundaries, aborts and failures ----------
+
+/** A response body that hands out one piece per read. `then` decides what follows the last piece. */
+function body(pieces: Array<string | Uint8Array>, then: "close" | "hang" | Error = "close") {
+  const enc = new TextEncoder();
+  const state = { reads: 0, cancelled: false };
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        const piece = pieces[state.reads++];
+        if (piece !== undefined) return controller.enqueue(typeof piece === "string" ? enc.encode(piece) : piece);
+        if (then === "hang") return new Promise<void>(() => {});
+        if (then instanceof Error) return controller.error(then);
+        controller.close();
+      },
+      cancel() {
+        state.cancelled = true;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { stream, state };
+}
+
+const sseResponse = (stream: ReadableStream<Uint8Array>, headers: Record<string, string> = {}) =>
+  new Response(stream, { status: 200, headers: { "content-type": "text/event-stream; charset=utf-8", ...headers } });
+
+/** Replaces fetch with answers in order (the last one repeats) and records what was sent. */
+function mockFetch(...answers: Array<() => Response>) {
+  const sent: Array<{ url: string; init: RequestInit; body: Record<string, unknown> }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string | URL | Request, init: RequestInit = {}) => {
+      sent.push({ url: String(url), init, body: JSON.parse(String(init.body ?? "{}")) as Record<string, unknown> });
+      return answers[Math.min(sent.length, answers.length) - 1]!();
+    }),
+  );
+  return sent;
+}
+
+const REQ: ChatRequest = { messages: [{ role: "user", content: "fix it" }], tools: HOSTED_TOOLS };
+const client = (o: { requestTimeoutMs?: number; errorGraceMs?: number } = {}) =>
+  new HostedClient({ baseUrl: "https://gateway.test/api/v1", apiKey: KEY, maxRetries: 2, retryBaseMs: 1, errorGraceMs: 50, ...o });
+
+/** A whole turn as the gateway streams it: keep-alives, a thought, content, two tool calls interleaved, usage, cost, [DONE]. */
+const TURN = [
+  ": keep-alive\n\n",
+  chunk({ role: "assistant", content: "" }),
+  chunk({ reasoning: "Two bugs: sum and mul." }),
+  chunk({ content: "Fixing both ✓ " }),
+  chunk({ content: "now." }),
+  chunk({ tool_calls: [{ index: 0, id: "call_a", type: "function", function: { name: "edit", arguments: "" } }] }),
+  chunk({ tool_calls: [{ index: 1, id: "call_b", type: "function", function: { name: "bash" } }] }),
+  chunk({ tool_calls: [{ index: 0, function: { arguments: '{"command": "view", ' } }] }),
+  ": keep-alive\n\n",
+  chunk({ tool_calls: [{ index: 1, function: { arguments: '{"command": "node --test"}' } }] }),
+  chunk({ tool_calls: [{ index: 0, function: { arguments: '"path": "/workspace/math.js"}' } }] }),
+  chunk({}, "tool_calls"),
+  usageChunk(340, 92),
+  settled("0.000427", "4.999573"),
+  "data: [DONE]\n\n",
+].join("");
+
+const TURN_RESULT = {
+  completion: {
+    id: "chatcmpl-1",
+    model: "forkbomb-hosted",
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: "Fixing both ✓ now.",
+          tool_calls: [
+            { id: "call_a", type: "function", function: { name: "edit", arguments: '{"command": "view", "path": "/workspace/math.js"}' } },
+            { id: "call_b", type: "function", function: { name: "bash", arguments: '{"command": "node --test"}' } },
+          ],
+          reasoning_content: "Two bugs: sum and mul.",
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+    usage: { prompt_tokens: 340, completion_tokens: 92, total_tokens: 432 },
+  },
+  costUsd: 0.000427,
+  remainingUsd: 4.999573,
+};
+
+/** `text` as bytes in pieces of `size`: small sizes cut lines, "data:", CRLF pairs and the 3-byte ✓ in half. */
+function pieces(text: string, size: number): Uint8Array[] {
+  const bytes = new TextEncoder().encode(text);
+  const out: Uint8Array[] = [];
+  for (let i = 0; i < bytes.length; i += size) out.push(bytes.slice(i, i + size));
+  return out;
+}
+
+describe("hosted client: streaming", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("asks for a stream with usage, and assembles the turn at any chunk boundary, LF or CRLF", async () => {
+    for (const text of [TURN, TURN.replaceAll("\n", "\r\n")]) {
+      for (const size of [1, 2, 3, 7, 64, 100_000]) {
+        const sent = mockFetch(() => sseResponse(body(pieces(text, size)).stream));
+        const turn = await client().chat(REQ, new AbortController().signal);
+        expect(turn, `size ${size}`).toEqual(TURN_RESULT);
+        expect(sent).toHaveLength(1);
+        expect(sent[0]!.url).toBe("https://gateway.test/api/v1/chat/completions");
+        expect(sent[0]!.body).toMatchObject({ model: "hosted", tool_choice: "auto", stream: true, stream_options: { include_usage: true } });
+        expect(sent[0]!.init.headers).toMatchObject({ authorization: `Bearer ${KEY}`, accept: "text/event-stream" });
+      }
+    }
+  });
+
+  it("aborts the request and the body read at once when the fork is killed mid-stream", async () => {
+    const { stream, state } = body([chunk({ role: "assistant", content: "" }), chunk({ content: "Let me" })], "hang");
+    const sent = mockFetch(() => sseResponse(stream));
+    const ctl = new AbortController();
+    const pending = client().chat(REQ, ctl.signal);
+    pending.catch(() => {});
+    // Both pieces read; the third read waits on a model that is still generating.
+    await vi.waitFor(() => expect(state.reads).toBe(3));
+    const t0 = performance.now();
+    ctl.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(performance.now() - t0).toBeLessThan(100);
+    expect(sent[0]!.init.signal!.aborted).toBe(true);
+    expect(state.cancelled).toBe(true);
+  });
+
+  it("returns at [DONE] and leaves the rest of the body to the server, so the connection can be reused", async () => {
+    const { stream, state } = body([TURN], "hang");
+    mockFetch(() => sseResponse(stream));
+    expect(await client().chat(REQ, new AbortController().signal)).toEqual(TURN_RESULT);
+    expect(state.cancelled).toBe(false);
+  });
+
+  it("retries a busy pool (503) before the stream starts, then streams", async () => {
+    const busy = () =>
+      Response.json(
+        { error: { message: "The hosted GPU pool is at capacity. Retry shortly.", type: "server_error", code: "upstream_busy" } },
+        { status: 503, headers: { "retry-after": "0" } },
+      );
+    const sent = mockFetch(busy, busy, () => sseResponse(body([TURN]).stream));
+    expect(await client().chat(REQ, new AbortController().signal)).toEqual(TURN_RESULT);
+    expect(sent).toHaveLength(3);
+  });
+
+  it("treats an answer cut off before finish_reason as a network error, even when the gateway ends it with [DONE], and never resends it", async () => {
+    const cut = [chunk({ role: "assistant", content: "" }), chunk({ tool_calls: [{ index: 0, id: "c", type: "function", function: { name: "bash", arguments: '{"comm' } }] })];
+    // The body just ends; or the gateway, whose upstream broke off mid-answer, still settles and sends [DONE].
+    const endings: Array<[string[], number | null]> = [
+      [cut, null],
+      [[...cut, settled("0.000031"), "data: [DONE]\n\n"], 0.000031],
+    ];
+    for (const [pieces, costUsd] of endings) {
+      const sent = mockFetch(() => sseResponse(body(pieces).stream));
+      const err = await client().chat(REQ, new AbortController().signal).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HostedError);
+      expect(err).toMatchObject({ kind: "network", message: "the hosted gateway stream ended before the answer was complete", costUsd });
+      expect(sent).toHaveLength(1);
+    }
+  });
+
+  it("retries a stream the gateway refunded in full before the model produced anything, like the HTTP 503/504 it stands for", async () => {
+    // The gateway's headers went out to hold the connection; then the job, still queued, ran out of time, or the
+    // pool was busy or warming up. The error event, then the settlement at zero.
+    const timeout = streamError("server_error", "upstream_timeout", "The hosted model did not finish within 280s.");
+    const refunded: string[][] = [
+      [": keep-alive\n\n", timeout + settled("0.000000")],
+      [": keep-alive\n\n", chunk({ role: "assistant", content: "" }), streamError("server_error", "upstream_error", "The hosted model failed mid-stream."), settled("0.000000"), "data: [DONE]\n\n"],
+      [streamError("server_error", "upstream_busy", "The hosted GPU pool is at capacity."), settled("0.000000")],
+    ];
+    for (const pieces of refunded) {
+      const sent = mockFetch(() => sseResponse(body(pieces).stream), () => sseResponse(body([TURN]).stream));
+      expect(await client().chat(REQ, new AbortController().signal)).toEqual(TURN_RESULT);
+      expect(sent).toHaveLength(2);
+    }
+    // Refunded every time: once the retries run out, the error it stands for, at no cost.
+    const sent = mockFetch(() => sseResponse(body([": keep-alive\n\n", timeout + settled("0.000000")]).stream));
+    const err = await client().chat(REQ, new AbortController().signal).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HostedError);
+    expect(err).toMatchObject({ kind: "http", status: 504, costUsd: 0, message: "hosted gateway error 504 upstream_timeout: The hosted model did not finish within 280s." });
+    expect(sent).toHaveLength(3);
+  });
+
+  it("never resends a failed stream that produced something, was charged, went unsettled, or would not be retried as HTTP", async () => {
+    const timeout = streamError("server_error", "upstream_timeout", "The hosted model did not finish within 280s.");
+    const cases: Array<[string[], object]> = [
+      [[chunk({ reasoning: "Let me" }), timeout + settled("0.000000")], { status: 504, costUsd: 0 }],
+      [[timeout + settled("0.000012")], { status: 504, costUsd: 0.000012 }],
+      [[timeout], { status: 504, costUsd: null }], // no settlement within the grace: what it cost is unknown
+      [[streamError("invalid_request_error", "upstream_rejected", "The prompt is too long."), settled("0.000000")], { kind: "http", status: 400, costUsd: 0 }],
+      [[streamError("billing_error", "insufficient_credits", "Insufficient credits"), settled("0.000000")], { kind: "credits", status: 402 }],
+    ];
+    for (const [pieces, want] of cases) {
+      const sent = mockFetch(() => sseResponse(body(pieces, "hang").stream));
+      const err = await client().chat(REQ, new AbortController().signal).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HostedError);
+      expect(err).toMatchObject(want);
+      expect(sent).toHaveLength(1);
+    }
+  });
+
+  it("reports a body that breaks mid-stream as a network error, and never resends it", async () => {
+    const reset = Object.assign(new TypeError("terminated"), { cause: { code: "ECONNRESET" } });
+    const sent = mockFetch(() => sseResponse(body([chunk({ role: "assistant", content: "" })], reset).stream));
+    await expect(client().chat(REQ, new AbortController().signal)).rejects.toMatchObject({
+      kind: "network",
+      message: "the hosted gateway stream broke off (ECONNRESET)",
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("stops a stream that outlives the request ceiling", async () => {
+    const { stream, state } = body([chunk({ role: "assistant", content: "" })], "hang");
+    mockFetch(() => sseResponse(stream));
+    await expect(client({ requestTimeoutMs: 100 }).chat(REQ, new AbortController().signal)).rejects.toMatchObject({
+      kind: "network",
+      message: expect.stringMatching(/^the hosted gateway didn't finish answering within/),
+    });
+    expect(state.cancelled).toBe(true);
+  });
+
+  it("maps mid-stream errors to the HTTP errors they stand for, and stops reading", async () => {
+    const cases: Array<[string, object]> = [
+      [streamError("server_error", "upstream_error", "The hosted model stream broke off."), { kind: "http", status: 502 }],
+      [streamError("server_error", "upstream_busy", "The hosted GPU pool is at capacity."), { kind: "unavailable", status: 503, message: expect.stringMatching(/at capacity/) }],
+      [streamError("billing_error", "insufficient_credits", "Insufficient credits"), { kind: "credits", status: 402 }],
+      [streamError("rate_limit_error", "rate_limited", "slow down"), { kind: "rate", status: 429 }],
+      [streamError("authentication_error", "invalid_api_key", "Invalid API key"), { kind: "auth", status: 401 }],
+      [streamError("invalid_request_error", "upstream_rejected", "max_tokens is too large"), { kind: "http", status: 400 }],
+    ];
+    for (const [event, want] of cases) {
+      const { stream, state } = body([chunk({ content: "partial" }), event], "hang");
+      const sent = mockFetch(() => sseResponse(stream));
+      const err = await client().chat(REQ, new AbortController().signal).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HostedError);
+      expect(err).toMatchObject(want);
+      expect(sent).toHaveLength(1);
+      expect(state.cancelled).toBe(true);
+    }
+  });
+
+  it("keeps what a call that failed mid-stream was still charged, and hangs up after a short grace without it", async () => {
+    const failed = streamError("server_error", "upstream_timeout", "The hosted model did not finish within 280s.");
+    // The gateway settles right after the error event: in the same write (a timeout) or a moment later (an upstream failure).
+    for (const pieces of [[chunk({ content: "partial" }), failed + settled("0.014100")], [chunk({ content: "partial" }), failed, ": keep-alive\n\n", settled("0.014100")]]) {
+      const { stream, state } = body(pieces, "hang");
+      mockFetch(() => sseResponse(stream));
+      const t0 = performance.now();
+      const err = await client({ errorGraceMs: 5000 }).chat(REQ, new AbortController().signal).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HostedError);
+      expect(err).toMatchObject({ kind: "http", status: 504, costUsd: 0.0141 });
+      expect(performance.now() - t0).toBeLessThan(1000);
+      expect(state.cancelled).toBe(true);
+    }
+    // No settlement: the cost stays unknown, and the read stops after the grace even though the server hangs.
+    const { stream, state } = body([chunk({ content: "partial" }), failed], "hang");
+    mockFetch(() => sseResponse(stream));
+    const t0 = performance.now();
+    const err = await client({ errorGraceMs: 100 }).chat(REQ, new AbortController().signal).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: "http", status: 504, costUsd: null });
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(state.cancelled).toBe(true);
+    // A kill during the grace is still a kill.
+    const hung = body([chunk({ content: "partial" }), failed], "hang");
+    mockFetch(() => sseResponse(hung.stream));
+    const ctl = new AbortController();
+    const pending = client({ errorGraceMs: 5000 }).chat(REQ, ctl.signal);
+    pending.catch(() => {});
+    await vi.waitFor(() => expect(hung.state.reads).toBe(3));
+    ctl.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(hung.state.cancelled).toBe(true);
+  });
+
+  it("takes an answer that ends on finish_reason without [DONE], with cost and balance from the headers", async () => {
+    mockFetch(() =>
+      sseResponse(body([chunk({ content: "Done." }), chunk({}, "stop")]).stream, { "x-request-cost-usd": "0.002", "x-credits-remaining-usd": "1.5" }),
+    );
+    const turn = await client().chat(REQ, new AbortController().signal);
+    expect(turn.completion.choices[0]).toMatchObject({ message: { content: "Done." }, finish_reason: "stop" });
+    expect(turn).toMatchObject({ costUsd: 0.002, remainingUsd: 1.5 });
+  });
+
+  it("prefers the settled figures in the stream over the reservation-time headers", async () => {
+    mockFetch(() => sseResponse(body([TURN]).stream, { "x-credits-remaining-usd": "4.990000" }));
+    expect(await client().chat(REQ, new AbortController().signal)).toMatchObject({ costUsd: 0.000427, remainingUsd: 4.999573 });
+  });
+
+  it("still takes a whole JSON completion from a server that ignores stream: true", async () => {
+    const r = reply({ content: "ok" });
+    mockFetch(() => Response.json(r.body, { headers: r.headers }));
+    const turn = await client().chat(REQ, new AbortController().signal);
+    expect(turn.completion.choices[0]!.message.content).toBe("ok");
+    expect(turn).toMatchObject({ costUsd: 0.0015, remainingUsd: null });
   });
 });
 

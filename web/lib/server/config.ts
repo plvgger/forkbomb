@@ -37,7 +37,13 @@ export type Config = {
   creditMultiplierPpm: bigint;
   /** A single burn worth more than this is held for manual review instead of credited. Micro-USD. */
   maxCreditPerBurnMicroUsd: number;
-  upstream: { baseUrl: string; apiKey: string; model: string };
+  upstream: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    /** How requests travel: plain OpenAI HTTP, or RunPod's job queue, whose jobs can be cancelled. */
+    transport: UpstreamTransport;
+  };
   /** Unsettled reservations older than this are refunded by the cron. */
   reservationTtlMinutes: number;
   limits: {
@@ -48,6 +54,18 @@ export type Config = {
   };
 };
 
+export type UpstreamTransport = "openai" | "runpod";
+
+/** RunPod serverless's OpenAI route. It keeps generating after the client hangs up; its job queue can cancel. */
+const RUNPOD_OPENAI_URL = /^https:\/\/api\.runpod\.ai\/v2\/[\w-]+\/openai\/v1$/i;
+
+/** UPSTREAM_TRANSPORT=openai|runpod wins; unset (or anything else) picks the queue for RunPod's OpenAI URL. */
+export function upstreamTransport(override: string | undefined, baseUrl: string): UpstreamTransport {
+  const o = (override ?? "").trim().toLowerCase();
+  if (o === "openai" || o === "runpod") return o;
+  return RUNPOD_OPENAI_URL.test(baseUrl) ? "runpod" : "openai";
+}
+
 export const isProduction = () => process.env.NODE_ENV === "production";
 
 /** True while `next build` evaluates modules. Secrets are not required then. */
@@ -55,6 +73,7 @@ const isBuildPhase = () => process.env.NEXT_PHASE === "phase-production-build";
 
 export function getConfig(): Config {
   const env = process.env;
+  const upstreamUrl = (env.UPSTREAM_BASE_URL || "").trim().replace(/\/+$/, "");
   return {
     tokenMint: (env.TOKEN_MINT || "").trim(),
     solanaRpcUrl: (env.SOLANA_RPC_URL || "").trim() || PUBLIC_MAINNET_RPC,
@@ -70,9 +89,10 @@ export function getConfig(): Config {
     creditMultiplierPpm: BigInt(usdToMicro(env.CREDIT_MULTIPLIER, 1_000_000)),
     maxCreditPerBurnMicroUsd: usdToMicro(env.MAX_CREDIT_PER_BURN_USD, 5_000_000_000),
     upstream: {
-      baseUrl: (env.UPSTREAM_BASE_URL || "").trim().replace(/\/+$/, ""),
+      baseUrl: upstreamUrl,
       apiKey: env.UPSTREAM_API_KEY || "",
       model: (env.UPSTREAM_MODEL || "").trim() || `${BRAND.slug}-coder`,
+      transport: upstreamTransport(env.UPSTREAM_TRANSPORT, upstreamUrl),
     },
     reservationTtlMinutes: positiveInt(env.RESERVATION_TTL_MINUTES, 15),
     limits: {

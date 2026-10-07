@@ -66,7 +66,7 @@ Without `DATABASE_URL`, the server opens an in-memory PGlite and applies the mig
 
 - `KEY_PEPPER` falls back to a fixed dev-only value.
 - With `TOKEN_MINT` unset, burns are closed, the ledger is empty and price sampling is skipped.
-- With `UPSTREAM_BASE_URL` unset, the gateway answers 503 `upstream_unavailable` without charging. Point it at any OpenAI-compatible server to exercise the full metering path.
+- With `UPSTREAM_BASE_URL` unset, the gateway answers 503 `upstream_unavailable` without charging. Point it at any OpenAI-compatible server to exercise the full metering path. A RunPod serverless OpenAI URL (`https://api.runpod.ai/v2/<id>/openai/v1`) switches the gateway to RunPod's job queue, which can cancel a job when the client leaves; `UPSTREAM_TRANSPORT=openai` forces the plain transport.
 - `POST /api/admin/grant` exists only when `ADMIN_SECRET` is at least 32 characters. Use it to give a local workspace test credit.
 
 To point the CLI at your local gateway, set `FORKBOMB_HOSTED_URL=http://localhost:4319/api/v1` and `FORKBOMB_API_KEY` to a key from `POST /api/workspaces`. Plain http is accepted for loopback only.

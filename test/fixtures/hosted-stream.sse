@@ -1,0 +1,36 @@
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"reasoning":"The"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"reasoning":" user"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"reasoning":" is"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"reasoning":" asking"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"id":"chatcmpl-tool-a99acce0555a0d38","type":"function","index":0,"function":{"name":"bash"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\": \""}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ls"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"id":"chatcmpl-tool-bd29e58f334275a6","type":"function","index":1,"function":{"name":"bash"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"command\": \""}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"cat"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":" package"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":".json"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"}"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls","stop_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-bad76a8c80b45906","object":"chat.completion.chunk","created":1791362732,"model":"forkbomb-hosted","choices":[],"usage":{"prompt_tokens":340,"total_tokens":432,"completion_tokens":92,"completion_tokens_details":{"reasoning_tokens":36}}}
+
+data: [DONE]
+

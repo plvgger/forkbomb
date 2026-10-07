@@ -174,7 +174,7 @@ export const RUN_PS: {
 ];
 export const RUN_END_S = 38.5; // when the judge passed 1.04 and killed the rest
 
-export const TEST_COUNT = 94; // tests in the CLI suite (`npx vitest list` at the repo root); test/site.test.ts checks it
+export const TEST_COUNT = 119; // tests in the CLI suite (`npx vitest list` at the repo root); test/site.test.ts checks it
 
 // Real terminal transcript of RUN (trimmed). Tones map to <Terminal> line tones.
 export const RUN_TRANSCRIPT: {

@@ -4,6 +4,17 @@ All notable changes to Forkbomb are documented here. The format follows [Keep a 
 
 ## Unreleased
 
+### Changed
+
+- The hosted engine streams its turns. Killing a fork hangs up mid-answer, so the gateway stops the GPU and bills only what was streamed, instead of running the fork's last turn to the end and billing all of it. A turn the gateway refunded in full before the model produced anything, such as a cold start that ran past the budget, is still retried.
+- On RunPod serverless, the gateway sends requests through RunPod's job queue instead of its OpenAI route, which kept generating after the client hung up. A job is cancelled when a streaming client leaves or the 280 s budget runs out, and it carries its own time limit in case the cancel is lost. In a live check, the GPU was free 88 ms after the client left. Polls are spaced at 250 ms and back off on a 429, so busy streams stay inside RunPod's shared rate limits. `UPSTREAM_TRANSPORT=openai` switches back.
+
+### Fixed
+
+- A hosted turn that fails mid-stream (for example a gateway timeout) now counts what the gateway charged for it in the fork's and the run's cost. Before, the run's total left those charges out.
+- The gateway bills reasoning sent as `delta.reasoning` (vLLM 0.30) when a stream is cut short. Before, a stream cut off mid-thought was billed for its input alone.
+- Error messages from the gateway no longer carry the upstream model name.
+
 ## 0.1.0 - 2026-10-07
 
 First public pre-release. macOS on APFS, Node 22 or newer. Install from source; not on npm yet.

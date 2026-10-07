@@ -1,10 +1,16 @@
 // One call to the upstream OpenAI-compatible server (vLLM on RunPod serverless, or anything that speaks
 // /chat/completions). Owns the timeout, the client-disconnect link, and one retry for cold starts.
-// Nothing here may put the upstream URL or key into a client-facing message.
+// RunPod's job queue (runpod.ts) reuses all of it and only changes how the request travels.
+// Nothing here may put the upstream URL, key or model into a client-facing message.
 
 import { ApiError } from "../http";
 
-export type UpstreamTarget = { baseUrl: string; apiKey: string };
+export type UpstreamTarget = {
+  baseUrl: string;
+  apiKey: string;
+  /** The upstream model name, scrubbed from messages like the URL and key. */
+  model?: string;
+};
 
 export type CallOptions = {
   /** Whole-call budget, including reading a streamed body. */
@@ -29,8 +35,8 @@ export class UpstreamCall {
   reason: AbortReason | null = null;
 
   constructor(
-    private readonly target: UpstreamTarget,
-    private readonly opts: CallOptions,
+    protected readonly target: UpstreamTarget,
+    protected readonly opts: CallOptions,
   ) {
     this.timer = setTimeout(() => this.abort("timeout"), opts.timeoutMs);
     if (opts.clientSignal?.aborted) this.abort("client");
@@ -58,18 +64,24 @@ export class UpstreamCall {
    * Throws ApiError 504 on timeout, 503 when unreachable, and AbortedByClient when the client left.
    */
   async post(body: Record<string, unknown>): Promise<Response> {
+    return this.postWithRetry(`${this.target.baseUrl}/chat/completions`, body, body.stream ? "text/event-stream" : "application/json", this.signal);
+  }
+
+  /** The Authorization header for the upstream, when it has a key. */
+  protected auth(): Record<string, string> {
+    return this.target.apiKey ? { Authorization: `Bearer ${this.target.apiKey}` } : {};
+  }
+
+  /** POSTs JSON with one retry on 502/503 or a refused connection (a cold GPU worker). Throws like post(). */
+  protected async postWithRetry(url: string, body: unknown, accept: string, signal: AbortSignal): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
       const last = attempt > 0;
       try {
-        const res = await fetch(`${this.target.baseUrl}/chat/completions`, {
+        const res = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: body.stream ? "text/event-stream" : "application/json",
-            ...(this.target.apiKey ? { Authorization: `Bearer ${this.target.apiKey}` } : {}),
-          },
+          headers: { "Content-Type": "application/json", Accept: accept, ...this.auth() },
           body: JSON.stringify(body),
-          signal: this.signal,
+          signal,
         });
         if (last || !RETRY_STATUSES.has(res.status)) return res;
         await res.body?.cancel().catch(() => {});
@@ -102,7 +114,8 @@ export class AbortedByClient extends ApiError {
   }
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+/** Waits ms, or less if signal aborts first. Never rejects. */
+export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (ms <= 0 || signal.aborted) return resolve();
     const done = () => {
@@ -118,7 +131,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 /** Removes anything that identifies the upstream from a message, and bounds its length. */
 export function scrub(message: string, target: UpstreamTarget): string {
   let out = message;
-  const secrets = [target.apiKey, target.baseUrl, hostOf(target.baseUrl)].filter((s) => s.length >= 4);
+  const secrets = [target.apiKey, target.baseUrl, hostOf(target.baseUrl), target.model ?? ""].filter((s) => s.length >= 4);
   for (const s of secrets) out = out.split(s).join("[upstream]");
   return out.replace(/https?:\/\/\S+/g, "[url]").slice(0, 500);
 }
