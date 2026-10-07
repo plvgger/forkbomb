@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a change to the CLI, the hosted API or forkbomb.fun.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lead with the problem. A concrete case where Forkbomb falls short is worth more than a proposed solution.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Forking and bench
+        - Sandbox and isolation
+        - Judge and scoring
+        - Engines
+        - Strategies and prompts
+        - Live view, replay and event log
+        - Hosted API
+        - Wallet app, burns or ledger
+        - Website or docs
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and where does Forkbomb get in the way? Include the repo type and test runner if they matter.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should change? Flags, output and API shapes help.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds you use today, or other designs you considered.
+
+  - type: textarea
+    id: isolation
+    attributes:
+      label: Isolation impact
+      description: Does this widen what a fork can read, write or reach on the network? If so, say how it stays safe.

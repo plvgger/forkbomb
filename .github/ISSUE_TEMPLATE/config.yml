@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/plvgger/forkbomb/security/advisories/new
+    about: Report privately through a GitHub security advisory. Never in a public issue.
+  - name: Documentation
+    url: https://forkbomb.fun/docs
+    about: Install, engines, flags, the hosted API and burn for compute.

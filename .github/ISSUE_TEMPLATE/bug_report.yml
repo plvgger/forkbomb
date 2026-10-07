@@ -1,0 +1,82 @@
+name: Bug report
+description: Something in the CLI, the hosted API or forkbomb.fun doesn't work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Security issues go to a private advisory, not here: https://github.com/plvgger/forkbomb/security/advisories/new
+
+        Never paste an API key, a private key or a seed phrase. `events.jsonl` contains your task text and file paths, so trim it before sharing.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI run (forking, sandbox, judge)
+        - CLI other command (bench, replay, export, doctor, credits, canary)
+        - Live view or replay UI
+        - Hosted API (/api/v1)
+        - Wallet app, burns or ledger
+        - Website or docs
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      description: For CLI runs.
+      options:
+        - claude-code
+        - api
+        - hosted
+        - Not a run
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The exact command you ran, flags included.
+      placeholder: node dist/cli.js run ./my-repo --task "..." --test "npm test" --forks 8
+      render: shell
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Terminal output, and the relevant lines of `~/.forkbomb/runs/<id>/events.jsonl` if you have them.
+      render: text
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: forkbomb doctor
+      description: Output of `node dist/cli.js doctor`.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Forkbomb version or commit
+      description: The version in package.json, or `git rev-parse --short HEAD`.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, chip, Node version, and the Claude Code version for the claude-code engine.
+      placeholder: macOS 15.x, Apple M2, Node 22.x, Claude Code x.y.z
