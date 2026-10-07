@@ -709,3 +709,20 @@ describe("transport selection", () => {
     expect(fake.calls[0]!.path).toBe("/run");
   });
 });
+
+describe("background work after the client leaves", () => {
+  it("hands the platform one promise that ends only after the settle and the job cancel", async () => {
+    const fake = runpod({ batches: [[chunk({ content: "abc" })]], hang: true }, { longPollMs: 10_000 });
+    const work: Promise<unknown>[] = [];
+    const res = await gateway({ waitUntil: (p) => work.push(p) })(chatReq({ ...hello, stream: true }));
+    expect(work).toHaveLength(1);
+    const reader = res.body!.getReader();
+    await reader.read();
+    await reader.cancel();
+
+    await work[0];
+    expect(fake.count("cancel")).toBe(1);
+    expect((await reservations())[0]!.status).not.toBe("active");
+    expect((await usageRows())[0]!.status).toBe("error");
+  });
+});

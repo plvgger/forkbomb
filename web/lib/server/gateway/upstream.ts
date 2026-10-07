@@ -54,6 +54,11 @@ export class UpstreamCall {
   }
 
   /** Stop the timer and drop the client listener. Call once the body is fully read or abandoned. */
+  /** Work this call still has running after its response is over (RunPod: a job cancel). */
+  backgroundWork(): Promise<void> {
+    return Promise.resolve();
+  }
+
   close(): void {
     clearTimeout(this.timer);
     this.opts.clientSignal?.removeEventListener("abort", this.onClientAbort);

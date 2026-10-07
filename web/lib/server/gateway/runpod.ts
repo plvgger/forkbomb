@@ -123,6 +123,10 @@ export class RunpodCall extends UpstreamCall {
   }
 
   /** Cancels the job: at most once per call, and never a job that already ended. Never throws. */
+  override backgroundWork(): Promise<void> {
+    return this.cancelling ?? Promise.resolve();
+  }
+
   private cancelJob(): Promise<void> {
     const id = this.jobId;
     if (!id || this.ended) return this.cancelling ?? Promise.resolve();

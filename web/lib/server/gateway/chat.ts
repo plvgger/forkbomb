@@ -44,6 +44,11 @@ export type GatewayOptions = {
   startedAt?: number;
   /** RunPod queue polling and keep-alive timings (tests shorten them). */
   runpod?: Partial<RunpodTimings>;
+  /**
+   * Keeps the platform running until background work ends: the settle and any job cancel after a client leaves
+   * a stream. The route passes Next's after(); without it, a frozen function could drop a cancel.
+   */
+  waitUntil?: (work: Promise<unknown>) => void;
 };
 export const GATEWAY_DEFAULTS = { timeoutMs: (ROUTE_MAX_DURATION_S - SETTLE_MARGIN_S) * 1000, retryDelayMs: 2_000 };
 
@@ -88,7 +93,9 @@ export async function chatCompletions(req: Request, options: GatewayOptions = {}
     clientSignal: chat.stream ? req.signal : undefined,
   };
   const call = cfg.upstream.transport === "runpod" ? new RunpodCall(target, callOpts, opts.runpod) : new UpstreamCall(target, callOpts);
+  keepAlive(opts.waitUntil, meter.whenSettled.then(() => call.backgroundWork()));
   const upstreamBody = {
+    ...cfg.upstream.extraBody,
     ...chat.body,
     model: cfg.upstream.model,
     stream: chat.stream,
@@ -118,9 +125,22 @@ export async function chatCompletions(req: Request, options: GatewayOptions = {}
   }
 }
 
+/** Hands background work to the platform. Never fails the request: outside a request scope after() throws. */
+function keepAlive(waitUntil: GatewayOptions["waitUntil"], work: Promise<unknown>): void {
+  const quiet = work.catch(() => {});
+  try {
+    waitUntil?.(quiet);
+  } catch (err) {
+    console.warn("[gateway] could not register background work", err instanceof Error ? err.message : err);
+  }
+}
+
 /** Settles one reservation exactly once, whichever path gets there first. */
 class Meter {
   private settled: Promise<Settlement | null> | null = null;
+  private markSettled!: () => void;
+  /** Resolves once the reservation is settled (or the settle failed and was logged). */
+  readonly whenSettled = new Promise<void>((resolve) => (this.markSettled = resolve));
 
   constructor(
     readonly rsv: Reservation,
@@ -137,10 +157,12 @@ class Meter {
       model: this.cfg.upstream.model,
       ...usage,
       status,
-    }).catch((err: unknown) => {
-      console.error("[gateway] settle failed; the reservation will expire with a full refund", err);
-      return null;
-    });
+    })
+      .catch((err: unknown) => {
+        console.error("[gateway] settle failed; the reservation will expire with a full refund", err);
+        return null;
+      })
+      .finally(() => this.markSettled());
     return this.settled;
   }
 
@@ -219,6 +241,7 @@ async function completeResponse(res: Response, meter: Meter, call: UpstreamCall)
   }
   const s = await meter.settle(usage, "ok");
   body.model = hostedModel();
+  delete body.system_fingerprint; // names the inference server and its version
   return json(body, { headers: { ...creditHeaders(s), "x-request-id": meter.rsv.id } });
 }
 
@@ -288,6 +311,7 @@ function streamResponse(res: Response, chat: ChatRequest, meter: Meter, call: Up
       }
     }
     if ("model" in obj) obj.model = hostedModel();
+    delete obj.system_fingerprint;
     if (!chat.includeUsage && "usage" in obj) {
       // The client did not ask for the usage chunk: some clients break on a chunk with no choices.
       if (Array.isArray(obj.choices) && obj.choices.length === 0) return null;

@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { chatCompletions } from "@/lib/server/gateway/chat";
 import { handler } from "@/lib/server/http";
 
@@ -11,4 +12,4 @@ export const maxDuration = 300;
 
 // POST /api/v1/chat/completions (Bearer key): OpenAI Chat Completions, metered against workspace credit.
 // Streaming (stream: true) and tool calling pass through. The model is always the hosted one.
-export const POST = handler((req: Request) => chatCompletions(req));
+export const POST = handler((req: Request) => chatCompletions(req, { waitUntil: (work) => after(() => work) }));

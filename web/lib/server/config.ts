@@ -43,6 +43,11 @@ export type Config = {
     model: string;
     /** How requests travel: plain OpenAI HTTP, or RunPod's job queue, whose jobs can be cancelled. */
     transport: UpstreamTransport;
+    /**
+     * Operator-set fields added to every upstream body (UPSTREAM_EXTRA_BODY, a JSON object), e.g.
+     * {"chat_template_kwargs":{"enable_thinking":false}}. Clients can't send these fields themselves.
+     */
+    extraBody: Record<string, unknown>;
   };
   /** Unsettled reservations older than this are refunded by the cron. */
   reservationTtlMinutes: number;
@@ -93,6 +98,7 @@ export function getConfig(): Config {
       apiKey: env.UPSTREAM_API_KEY || "",
       model: (env.UPSTREAM_MODEL || "").trim() || `${BRAND.slug}-coder`,
       transport: upstreamTransport(env.UPSTREAM_TRANSPORT, upstreamUrl),
+      extraBody: jsonObject(env.UPSTREAM_EXTRA_BODY, "UPSTREAM_EXTRA_BODY"),
     },
     reservationTtlMinutes: positiveInt(env.RESERVATION_TTL_MINUTES, 15),
     limits: {
@@ -118,6 +124,17 @@ export function usdToMicro(raw: string | undefined, fallback: number): number {
   const m = /^(\d{1,12})(?:\.(\d{1,6}))?$/.exec(s);
   if (!m) return fallback;
   return Number(m[1]) * 1_000_000 + Number((m[2] ?? "").padEnd(6, "0"));
+}
+
+/** A JSON object from env, or {} (logged) when it is missing or not an object. */
+export function jsonObject(raw: string | undefined, name: string): Record<string, unknown> {
+  if (!raw?.trim()) return {};
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  } catch {}
+  console.error(`[config] ${name} is not a JSON object; ignoring it`);
+  return {};
 }
 
 function positiveInt(raw: string | undefined, fallback: number): number {

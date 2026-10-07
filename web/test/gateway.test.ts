@@ -581,3 +581,51 @@ describe("concurrency", () => {
     expect((await reservations()).every((r) => r.status === "settled")).toBe(true);
   });
 });
+
+describe("operator settings and background work", () => {
+  it("adds UPSTREAM_EXTRA_BODY to every upstream body; clients cannot send those fields themselves", async () => {
+    vi.stubEnv("UPSTREAM_EXTRA_BODY", '{"chat_template_kwargs":{"enable_thinking":false}}');
+    const calls = upstream(() => jsonRes(completion({ role: "assistant", content: "ok" })));
+    await fund(1_000_000);
+    const res = await send(chatReq({ ...hello, chat_template_kwargs: { enable_thinking: true }, temperature: 0.2 }));
+    expect(res.status).toBe(200);
+    expect(calls[0]!.body).toMatchObject({ chat_template_kwargs: { enable_thinking: false }, temperature: 0.2, model: UPSTREAM_MODEL });
+  });
+
+  it("ignores an UPSTREAM_EXTRA_BODY that is not a JSON object", async () => {
+    vi.stubEnv("UPSTREAM_EXTRA_BODY", "[1,2]");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const calls = upstream(() => jsonRes(completion({ role: "assistant", content: "ok" })));
+    await fund(1_000_000);
+    expect((await send(chatReq(hello))).status).toBe(200);
+    expect(Object.keys(calls[0]!.body).sort()).toEqual(["max_tokens", "messages", "model", "stream"]);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining("UPSTREAM_EXTRA_BODY"));
+  });
+
+  it("strips system_fingerprint (it names the inference server) from answers and stream chunks", async () => {
+    upstream((call) =>
+      call.body.stream
+        ? sse([chunk({ content: "hi" }, { system_fingerprint: "vllm-x" }), usageChunk(10, 1), "data: [DONE]\n\n"], call.signal)
+        : jsonRes({ ...completion({ role: "assistant", content: "ok" }), system_fingerprint: "vllm-x" }),
+    );
+    await fund(1_000_000);
+    expect(await (await send(chatReq(hello))).text()).not.toContain("system_fingerprint");
+    expect(await (await send(chatReq({ ...hello, stream: true }))).text()).not.toContain("system_fingerprint");
+  });
+
+  it("hands the platform background work that ends after the settle, and a failing hook never breaks the request", async () => {
+    upstream(() => jsonRes(completion({ role: "assistant", content: "ok" })));
+    await fund(1_000_000);
+    const work: Promise<unknown>[] = [];
+    expect((await gateway({ waitUntil: (p) => work.push(p) })(chatReq(hello))).status).toBe(200);
+    expect(work).toHaveLength(1);
+    await work[0];
+    expect((await usageRows())[0]!.status).toBe("ok");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await gateway({ waitUntil: () => { throw new Error("outside a request scope"); } })(chatReq(hello));
+    expect(res.status).toBe(200);
+    expect(warn).toHaveBeenCalled();
+    expect(await usageRows()).toHaveLength(2);
+  });
+});
