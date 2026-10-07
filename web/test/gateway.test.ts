@@ -629,3 +629,13 @@ describe("operator settings and background work", () => {
     expect(await usageRows()).toHaveLength(2);
   });
 });
+
+describe("deployment", () => {
+  it("asks Vercel to report client disconnects to the chat route, and only to it", async () => {
+    // Without supportsCancellation, Vercel never aborts request.signal: a killed fork's stream ran on, billed in full.
+    const { readFileSync } = await import("node:fs");
+    const cfg = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8")) as { functions?: Record<string, { supportsCancellation?: boolean }> };
+    const cancelling = Object.entries(cfg.functions ?? {}).filter(([, f]) => f.supportsCancellation).map(([path]) => path);
+    expect(cancelling).toEqual(["app/api/v1/chat/completions/route.ts"]);
+  });
+});

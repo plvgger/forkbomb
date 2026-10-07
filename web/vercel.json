@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "crons": [{ "path": "/api/cron/price", "schedule": "0 0 * * *" }]
+  "crons": [{ "path": "/api/cron/price", "schedule": "0 0 * * *" }],
+  "functions": {
+    "app/api/v1/chat/completions/route.ts": { "supportsCancellation": true }
+  }
 }
