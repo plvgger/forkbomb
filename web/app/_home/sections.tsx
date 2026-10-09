@@ -10,6 +10,7 @@ import {
   Glyph,
   Icon,
   Marquee,
+  monoTicker,
   PixelHeading,
   PsTable,
   ReplayFrame,
@@ -310,7 +311,7 @@ export function HowItWorks() {
             <span className={s.stepN} aria-hidden="true">
               {st.n}
             </span>
-            <h3 className={s.stepT}>{st.t}</h3>
+            <h3 className={s.stepT}>{monoTicker(st.t)}</h3>
             <code className={s.stepCmd}>{st.cmd}</code>
             <p className={s.stepD}>{st.d}</p>
           </li>
@@ -328,7 +329,7 @@ const FLOW: {
   t: string;
   d: ReactNode;
   tag?: string;
-  tagTone?: "signal" | "warn";
+  tagTone?: "signal" | "warn" | "ok";
 }[] = [
   { icon: "wallet", t: "Your wallet", d: <>holds {SITE.ticker}</> },
   {
@@ -349,7 +350,7 @@ const FLOW: {
     t: "Hosted forks",
     d: <code>--engine hosted</code>,
     tag: POOL_STATUS,
-    tagTone: "warn",
+    tagTone: STATUS.hostedPoolLive ? "ok" : "warn", // the same tone as the status panel's hosted pool badge
   },
 ];
 
@@ -364,7 +365,7 @@ function BurnFlow() {
           <span className={s.flowIcon} aria-hidden="true">
             <Icon name={f.icon} size={20} />
           </span>
-          <span className={s.flowT}>{f.t}</span>
+          <span className={s.flowT}>{monoTicker(f.t)}</span>
           <span className={s.flowD}>{f.d}</span>
           {f.tag && (
             <Badge tone={f.tagTone} className={s.flowTag}>
@@ -431,7 +432,7 @@ export function BurnForCompute() {
                   {i + 1}
                 </span>
                 <div>
-                  <h3 className={s.burnT}>{b.t}</h3>
+                  <h3 className={s.burnT}>{monoTicker(b.t)}</h3>
                   <p className={s.burnD}>{b.d}</p>
                 </div>
               </li>
@@ -685,7 +686,7 @@ export function Engines() {
             <header className={s.engineHead}>
               <div className={s.engineHeadText}>
                 <h3 id={`eng-${e.id}`} className={s.engineName}>
-                  {e.name}
+                  {monoTicker(e.name)}
                 </h3>
                 <code className={s.engineFlag}>{e.flag}</code>
               </div>

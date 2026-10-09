@@ -586,9 +586,10 @@ export default function DocsPage() {
                         In the{" "}
                         <Link className="link" href={APP_URL}>
                           app
-                        </Link>{" "}
-                        (opens at launch). You get a workspace id, an API key that starts with <code>{KEY_PREFIX}</code>,
-                        and your burn memo. The key is shown once. Only a hash of it is stored.
+                        </Link>
+                        {STATUS.appLive ? "" : " (opens at launch)"}. You get a workspace id, an API key that starts with{" "}
+                        <code>{KEY_PREFIX}</code>, and your burn memo. The key is shown once. Only a hash of it is stored.
+                        {STATUS.tokenLive ? "" : " Burns open at launch."}
                       </p>
                     ),
                   },
@@ -644,14 +645,18 @@ export default function DocsPage() {
               <H3 id="hosted-credits">Credits and pricing</H3>
               <p>
                 Hosted compute is priced per million input tokens and per million output tokens, in USD. The current
-                prices come back from <code>GET /api/v1/me</code> and <code>{BIN} credits</code> prints them. Prices are
-                not final until the pool is live.
+                prices come back from <code>GET /api/v1/me</code> and <code>{BIN} credits</code> prints them.
+                {STATUS.hostedPoolLive ? " Prices can change; those two always show the current ones." : " Prices are not final until the pool is live."}
               </p>
               <ul>
                 <li>
                   Each request first reserves the most it could cost: the estimated input plus <code>max_tokens</code>.
                 </li>
                 <li>When the model answers, the real cost is charged and the rest of the reservation is returned.</li>
+                <li>
+                  A stream stopped early (a killed fork) has no usage report, so its input is estimated at about 4 bytes
+                  per token, close to the real count for code and English.
+                </li>
                 <li>A request that fails upstream is charged nothing.</li>
                 <li>The balance can&apos;t go below zero. The database refuses it.</li>
               </ul>
@@ -1071,7 +1076,9 @@ export default function DocsPage() {
                   the first sample at or after <em>T</em>,
                 </li>
                 <li>
-                  the last sample at or before <em>T</em>.
+                  the last sample at or before <em>T</em> (at most 30 minutes old). Block times are whole seconds and run
+                  a second or two behind, so when there is none, a sample taken within 5 seconds after <em>T</em> stands
+                  in.
                 </li>
               </ul>
               <p>
@@ -1136,7 +1143,7 @@ export default function DocsPage() {
               id="api"
               index={next()}
               title="API reference"
-              lede="The hosted gateway and the burn endpoints. JSON in, JSON out. The gateway speaks the OpenAI Chat Completions format, so any OpenAI-compatible client works with a base URL change."
+              lede="The hosted gateway and the burn endpoints. JSON in, JSON out. The gateway speaks the OpenAI Chat Completions format and lists its model at /models, so OpenAI-compatible clients work with a base URL change, in the browser too."
             >
               <dl className={s.facts}>
                 <div>
@@ -1154,7 +1161,15 @@ export default function DocsPage() {
                 <div>
                   <dt>Errors</dt>
                   <dd>
-                    OpenAI shape: <code>{"{error:{message,type,code}}"}</code>
+                    OpenAI shape: <code>{"{error:{message,type,code}}"}</code>, wrong methods (405) and unknown paths (404)
+                    included. One exception: a body over 4.5 MB is refused by the hosting platform with a plain-text 413.
+                  </dd>
+                </div>
+                <div>
+                  <dt>CORS</dt>
+                  <dd>
+                    <code>/api/v1/*</code> answers any origin. Keys travel in a header, never a cookie, and the credit
+                    headers are readable.
                   </dd>
                 </div>
                 <div>
@@ -1185,7 +1200,8 @@ export default function DocsPage() {
                   </li>
                   <li>
                     <code>stream: true</code> works, with <code>stream_options.include_usage</code>. A stream stops the
-                    GPU when you disconnect and bills only what was streamed.
+                    GPU when you disconnect and bills what was streamed plus its input, estimated at about 4 bytes per
+                    token (a stopped stream never gets a usage report).
                   </li>
                   <li>
                     Every answer carries <code>x-request-cost-usd</code> and <code>x-credits-remaining-usd</code>
@@ -1220,6 +1236,52 @@ export default function DocsPage() {
                 />
                 <p className={s.note}>
                   <code>balanceMicroUsd</code> is the exact integer. The <code>Usd</code> numbers are for display.
+                </p>
+              </Endpoint>
+
+              <Endpoint
+                id="api-usage"
+                method="GET"
+                path="/api/v1/usage"
+                auth="Bearer key"
+                summary="Your workspace's recent requests, newest first, with totals. Read-only. The app's usage table reads this."
+              >
+                <Synopsis>GET /api/v1/usage?limit=50</Synopsis>
+                <CodeBlock
+                  title="200"
+                  lang="json"
+                  code={`{
+  "usage": [
+    { "id": "…", "createdAt": "…", "model": "${HOSTED_MODEL}", "inputTokens": <integer>,
+      "outputTokens": <integer>, "costMicroUsd": <integer>, "status": "ok" | "error" | "expired" }
+  ],
+  "totals": { "requests": <integer>, "inputTokens": <integer>, "outputTokens": <integer>,
+              "costMicroUsd": <integer>, "creditedMicroUsd": <integer> }
+}`}
+                  ariaLabel="Response shape of /api/v1/usage"
+                />
+                <p className={s.note}>
+                  <code>limit</code> is 1 to 100, default 50. Costs are exact integers in micro-USD.
+                </p>
+              </Endpoint>
+
+              <Endpoint
+                id="api-models"
+                method="GET"
+                path="/api/v1/models"
+                auth="Public"
+                summary="The OpenAI model list: the one hosted model. Clients that fill a model picker from it work unchanged."
+              >
+                <CodeBlock
+                  title="200"
+                  lang="json"
+                  code={`{ "object": "list",
+  "data": [{ "id": "${HOSTED_MODEL}", "object": "model", "created": <unix seconds>, "owned_by": "forkbomb" }] }`}
+                  ariaLabel="Response shape of /api/v1/models"
+                />
+                <p className={s.note}>
+                  <code>GET /api/v1/models/{HOSTED_MODEL}</code> returns that object alone; any other id is{" "}
+                  <code>404 model_not_found</code>.
                 </p>
               </Endpoint>
 
@@ -1295,6 +1357,30 @@ export default function DocsPage() {
 }`}
                   ariaLabel="Response shape of /api/price"
                 />
+              </Endpoint>
+
+              <Endpoint
+                id="api-token"
+                method="GET"
+                path="/api/token"
+                auth="Public"
+                summary="What the burn panel needs to build a burn: the mint, its program and decimals, the memo prefix and the credit rules. Burns are closed until launch."
+              >
+                <CodeBlock
+                  title="200"
+                  lang="json"
+                  code={`{
+  "ticker": "${SITE.ticker.slice(1)}", "mint": "…" | null, "decimals": <integer> | null,
+  "program": "token" | "token-2022" | null, "burnsOpen": <boolean>,
+  "memoPrefix": "${TOKEN_MEMO_PREFIX}", "cluster": "mainnet" | "devnet" | "testnet",
+  "creditMultiplier": "…", "maxCreditPerBurnUsd": "…"
+}`}
+                  ariaLabel="Response shape of /api/token"
+                />
+                <p className={s.note}>
+                  <code>mint</code>, <code>decimals</code> and <code>program</code> are null and <code>burnsOpen</code> is
+                  false before launch, or while the mint can&apos;t be read from Solana.
+                </p>
               </Endpoint>
 
               <Endpoint

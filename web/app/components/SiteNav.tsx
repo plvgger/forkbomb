@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { GITHUB_URL, NAV, NAV_CTA, SITE, TOKEN_LINK, type NavLink } from "../config";
+import { monoTicker } from "./ticker";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
@@ -28,7 +29,7 @@ function NavAnchor({
   const current = isActive(pathname, link.href) ? "page" : undefined;
   const inner = (
     <>
-      {link.label}
+      {monoTicker(link.label)}
       {chevron && <Icon name={link.external ? "arrowUpRight" : "arrowRight"} />}
     </>
   );
@@ -107,7 +108,7 @@ export function SiteNav() {
           >
             <span className="sr-only">GitHub</span>
           </Button>
-          <Button href={NAV_CTA.wallet.href} size="sm" variant="outline" icon="wallet" className="btn--wallet">
+          <Button href={NAV_CTA.wallet.href} size="sm" variant="outline" icon={NAV_CTA.wallet.icon} className="btn--wallet">
             {NAV_CTA.wallet.label}
           </Button>
           <Button href={NAV_CTA.app.href} size="sm" variant="primary" className="btn--app">
@@ -130,7 +131,7 @@ export function SiteNav() {
                 <Button href={NAV_CTA.app.href} variant="primary" size="lg" block iconRight="arrowRight">
                   {NAV_CTA.app.label}
                 </Button>
-                <Button href={NAV_CTA.wallet.href} variant="outline" size="lg" icon="wallet" block>
+                <Button href={NAV_CTA.wallet.href} variant="outline" size="lg" icon={NAV_CTA.wallet.icon} block>
                   {NAV_CTA.wallet.label}
                 </Button>
                 <Button href={GITHUB_URL} external size="lg" icon="github" variant="ghost" block>

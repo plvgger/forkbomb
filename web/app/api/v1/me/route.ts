@@ -1,7 +1,7 @@
 import { getConfig } from "@/lib/server/config";
 import { getBalance } from "@/lib/server/credits";
 import { hostedModel } from "@/lib/server/gateway/chat";
-import { handler, json } from "@/lib/server/http";
+import { handler, json, otherMethods } from "@/lib/server/http";
 import { authenticate } from "@/lib/server/keys";
 
 export const runtime = "nodejs";
@@ -23,3 +23,4 @@ export const GET = handler(async (req: Request) => {
     },
   });
 });
+export const { POST, PUT, PATCH, DELETE, OPTIONS } = otherMethods("GET");

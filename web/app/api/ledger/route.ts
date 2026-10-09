@@ -1,6 +1,6 @@
 import { type LedgerPage, listLedger } from "@/lib/server/burns";
 import { getConfig } from "@/lib/server/config";
-import { ApiError, handler, json, PUBLIC_SHORT } from "@/lib/server/http";
+import { ApiError, handler, json, otherMethods, PUBLIC_SHORT } from "@/lib/server/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,3 +20,4 @@ export const GET = handler(async (req: Request) => {
   const page = await listLedger({ cursor: url.searchParams.get("cursor"), limit });
   return json(page, { cache: PUBLIC_SHORT });
 });
+export const { POST, PUT, PATCH, DELETE, OPTIONS } = otherMethods("GET");

@@ -340,7 +340,7 @@ describe("streaming over the RunPod queue", () => {
     expect(fake.calls.filter((c) => c.path.startsWith("/stream/")).at(-1)!.signal.aborted).toBe(true);
 
     await until(async () => (await reservations())[0]!.status !== "active");
-    const est = parseChatRequest(body).estimatedInputTokens;
+    const est = parseChatRequest(body).billedInputTokens;
     const [row] = await usageRows();
     expect(row).toMatchObject({ status: "error", input_tokens: est });
     expect(row!.output_tokens).toBeGreaterThanOrEqual(1);

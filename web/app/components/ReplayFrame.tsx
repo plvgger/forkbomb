@@ -51,6 +51,9 @@ export function ReplayFrame({
           title="Replay of a real Forkbomb run: four forks race, three are killed, one exits 0"
           loading={eager ? "eager" : "lazy"}
           referrerPolicy="no-referrer"
+          // Embed mode hides everything focusable inside, so the frame would be an invisible Tab stop.
+          // "Open full replay" above is the keyboard way in.
+          tabIndex={src === REPLAY_EMBED_URL ? -1 : undefined}
         />
       </div>
       <ReplayReady />

@@ -48,7 +48,24 @@ export function H3({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
-/** Flag / default / description table. Scrolls inside its own box. */
+/**
+ * A cell's text with each --flag in a <code> that never wraps, so "--engine" can't break after its dashes.
+ * Other cells pass through.
+ */
+function cellText(c: ReactNode): ReactNode {
+  if (typeof c !== "string" || !c.includes("--")) return c;
+  return c.split(/(--[a-z][a-z0-9-]*)/g).map((part, i) =>
+    i % 2 ? (
+      <code key={i} className={s.flagInline}>
+        {part}
+      </code>
+    ) : (
+      part
+    ),
+  );
+}
+
+/** Flag / default / description table. Scrolls inside its own box; a labelled card per row on phones. */
 export function FlagTable({ flags, caption }: { flags: Flag[]; caption: string }) {
   return (
     <div className={`table-wrap ${s.tableWrap}`} tabIndex={0} role="region" aria-label={caption}>
@@ -69,11 +86,13 @@ export function FlagTable({ flags, caption }: { flags: Flag[]; caption: string }
         <tbody>
           {flags.map((f) => (
             <tr key={f.flag}>
-              <td className={s.flagCell}>
+              <td className={s.flagCell} data-label="Flag">
                 <code>{f.flag}</code>
               </td>
-              <td className={s.defCell}>{f.def}</td>
-              <td>{f.desc}</td>
+              <td className={s.defCell} data-label="Default">
+                {f.def}
+              </td>
+              <td data-label="Description">{cellText(f.desc)}</td>
             </tr>
           ))}
         </tbody>
@@ -82,7 +101,7 @@ export function FlagTable({ flags, caption }: { flags: Flag[]; caption: string }
   );
 }
 
-/** Generic two- or three-column reference table. */
+/** Generic two- or three-column reference table. A labelled card per row on phones, so no column hides off-screen. */
 export function RefTable({
   caption,
   head,
@@ -112,8 +131,8 @@ export function RefTable({
           {rows.map((r, i) => (
             <tr key={i}>
               {r.map((c, j) => (
-                <td key={j} className={mono.includes(j) ? s.monoCell : undefined}>
-                  {c}
+                <td key={j} className={mono.includes(j) ? s.monoCell : undefined} data-label={head[j]}>
+                  {cellText(c)}
                 </td>
               ))}
             </tr>

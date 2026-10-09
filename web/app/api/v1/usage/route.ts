@@ -1,4 +1,4 @@
-import { ApiError, handler, json } from "@/lib/server/http";
+import { ApiError, handler, json, otherMethods } from "@/lib/server/http";
 import { authenticate } from "@/lib/server/keys";
 import { workspaceUsage } from "./usage";
 
@@ -15,3 +15,4 @@ export const GET = handler(async (req: Request) => {
   }
   return json(await workspaceUsage(workspace.id, limit));
 });
+export const { POST, PUT, PATCH, DELETE, OPTIONS } = otherMethods("GET");

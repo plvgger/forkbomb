@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { DEPTH, EXITED, FORKS, KILLED, NODES, OUTER0, lineageOf } from "../app/components/forkTree";
-import { APP_URL, CLI_HOME, CLI_PROBE, NAV_CTA, RUN, RUN_TRANSCRIPT, STATUS, TOKEN_MEMO_PREFIX } from "../app/config";
+import { APP_URL, CLI_HOME, CLI_PROBE, NAV_CTA, RUN, RUN_TRANSCRIPT, SITE, STATUS, TOKEN_MEMO_PREFIX } from "../app/config";
 import { BENCH_FLAGS, EVENTS, RUN_FLAGS } from "../app/docs/_parts/content";
 import { BRAND } from "../lib/server/config";
 
@@ -32,6 +32,12 @@ describe("app status", () => {
     expect(APP_URL).toBe("/app");
     expect(NAV_CTA.app.href).toBe(APP_URL);
     expect(NAV_CTA.wallet.href).toBe(APP_URL);
+  });
+
+  it("offers a wallet only once burns are open; until then the second CTA promises what /app gives", () => {
+    expect(NAV_CTA.wallet).toMatchObject(
+      STATUS.tokenLive ? { label: "Connect wallet", icon: "wallet" } : { label: "Get an API key", icon: "key" },
+    );
   });
 });
 
@@ -71,9 +77,33 @@ describe("type", () => {
     }
   });
 
+  it("never sets the ticker or the hazard tape's small caps in the pixel face (its B reads as G)", () => {
+    const css = read("app/globals.css");
+    const rule = (selector: string) => {
+      const at = css.indexOf(`${selector} {`);
+      expect(at, selector).toBeGreaterThanOrEqual(0);
+      return css.slice(at, css.indexOf("}", at));
+    };
+    expect(rule(".ticker")).toContain("var(--font-mono)");
+    expect(rule(".hazard__label")).toContain("var(--font-mono)");
+    expect(rule(".hazard__label")).not.toContain("--font-pixel");
+  });
+
   it("has no pixel-font buttons", () => {
     expect(read("app/globals.css")).not.toContain("btn--pixel");
     expect(read("app/components/Button.tsx")).not.toContain("pixel");
+  });
+});
+
+describe("contrast", () => {
+  // Regression: killed forks were dimmed with opacity (text at 2.67:1), and touch screens showed heading anchors
+  // at half opacity (2.14:1).
+  it("dims killed forks without opacity, and shows touch anchors at full --text-3", () => {
+    const css = read("app/globals.css");
+    const cut = [...css.matchAll(/\.run-tree__item--cut[^{]*\{([^}]*)\}/g)].map((m) => m[1]!);
+    expect(cut.length).toBeGreaterThan(0);
+    for (const body of cut) expect(body).not.toMatch(/opacity/);
+    expect(read("app/docs/docs.module.css")).toMatch(/@media \(hover: none\) \{ \.anchor \{ opacity: 1; \} \}/);
   });
 });
 
@@ -129,6 +159,15 @@ describe("standalone /replay page", () => {
     expect(app).toContain("window.FORKBOMB_EVENTS");
     expect(app).toContain('"forkbomb:replay-ready"');
     expect(read("app/components/ReplayReady.tsx")).toContain('"forkbomb:replay-ready"');
+  });
+
+  // Regression: relative og:image/og:url, which Facebook, LinkedIn and Slack drop, on the most-shared page.
+  it("uses absolute share URLs on the site's origin", () => {
+    const tag = (re: RegExp) => re.exec(html)?.[1];
+    expect(tag(/<link rel="canonical" href="([^"]+)">/)).toBe(`${SITE.url}/replay`);
+    expect(tag(/<meta property="og:url" content="([^"]+)">/)).toBe(`${SITE.url}/replay`);
+    expect(tag(/<meta property="og:image" content="([^"]+)">/)).toBe(`${SITE.url}/opengraph-image`);
+    expect(tag(/<meta name="twitter:image" content="([^"]+)">/)).toBe(`${SITE.url}/twitter-image`);
   });
 
   it("stays chromeless in embed mode", () => {

@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { getConfig } from "@/lib/server/config";
 import { credit, formatMicroUsd } from "@/lib/server/credits";
 import { getDb, pgCode } from "@/lib/server/db";
-import { ApiError, clientIp, handler, json, readJsonObject } from "@/lib/server/http";
+import { ApiError, clientIp, handler, json, otherMethods, readJsonObject } from "@/lib/server/http";
 import { hashIp } from "@/lib/server/keys";
 import { enforce } from "@/lib/server/ratelimit";
 
@@ -54,3 +54,4 @@ export const POST = handler(async (req: Request) => {
   console.info(`[admin/grant] ${workspaceId} +$${formatMicroUsd(micro)} ref=${ref}`);
   return json({ workspaceId, grantedUsd: formatMicroUsd(micro), balanceUsd: formatMicroUsd(balance), ref });
 });
+export const { GET, PUT, PATCH, DELETE, OPTIONS } = otherMethods("POST");

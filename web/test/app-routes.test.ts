@@ -137,6 +137,48 @@ describe("POST /api/rpc", () => {
     expect((await call("198.51.100.2")).status).toBe(200);
   });
 
+  // Regression: a text/plain POST is a CORS "simple request", so any site could make its visitors' browsers spend
+  // the shared RPC quota without a preflight.
+  it("serves only this site's pages: JSON content type, no cross-site fetch", async () => {
+    rpcAnswer = () => ok({ value: 1 });
+    const body = { jsonrpc: "2.0", id: 1, method: "getLatestBlockhash", params: [] };
+    const plain = await rpcRoute(rpcPost(body, { "content-type": "text/plain" }));
+    expect(plain.status).toBe(415);
+    expect(await plain.json()).toMatchObject({ error: { code: "unsupported_media_type" } });
+    for (const site of ["cross-site", "same-site"]) {
+      const res = await rpcRoute(rpcPost(body, { "sec-fetch-site": site }));
+      expect(res.status, site).toBe(403);
+      expect(await res.json()).toMatchObject({ error: { code: "cross_site" } });
+    }
+    expect(rpcCalls).toEqual([]);
+    expect((await rpcRoute(rpcPost(body, { "sec-fetch-site": "same-origin" }))).status).toBe(200);
+    expect((await rpcRoute(rpcPost(body, { "content-type": "application/json; charset=utf-8" }))).status).toBe(200);
+  });
+
+  it("caps all callers together, whatever their IPs", async () => {
+    vi.stubEnv("RATE_RPC_GLOBAL_PER_MINUTE", "3");
+    rpcAnswer = () => ok({ value: 1 });
+    const call = (ip: string) => rpcRoute(rpcPost({ jsonrpc: "2.0", id: 1, method: "getBalance", params: ["o"] }, { "x-forwarded-for": ip }));
+    for (const ip of ["198.51.100.1", "198.51.100.2", "198.51.100.3"]) expect((await call(ip)).status).toBe(200);
+    expect((await call("198.51.100.4")).status).toBe(429);
+  });
+
+  it("forwards to SOLANA_PROXY_RPC_URL when set, keeping SOLANA_RPC_URL for verification", async () => {
+    const proxyUrl = "https://proxy-rpc.test.invalid";
+    vi.stubEnv("SOLANA_PROXY_RPC_URL", proxyUrl);
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        seen.push(String(input instanceof Request ? input.url : input));
+        return ok({ value: 7 });
+      }),
+    );
+    const res = await rpcRoute(rpcPost({ jsonrpc: "2.0", id: 1, method: "getBalance", params: ["o"] }));
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([proxyUrl]);
+  });
+
   it("maps an unreachable RPC to 502", async () => {
     rpcAnswer = () => new Response("down", { status: 500 });
     const res = await rpcRoute(rpcPost({ jsonrpc: "2.0", id: 1, method: "getLatestBlockhash", params: [] }));

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { Container, PageHeader, Prose } from "../../components";
+import { Container, monoTicker, PageHeader, Prose } from "../../components";
 import styles from "./legal.module.css";
 
 export type LegalSection = { id: string; title: string; body: ReactNode };
@@ -69,7 +69,7 @@ export function LegalDoc({
                     <p className={`eyebrow ${styles.clauseNum}`} aria-hidden="true">
                       <span className="eyebrow__index">{String(i + 1).padStart(2, "0")}</span>
                     </p>
-                    <h2 id={s.id}>{s.title}</h2>
+                    <h2 id={s.id}>{monoTicker(s.title)}</h2>
                     {s.body}
                   </div>
                 ))}

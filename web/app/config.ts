@@ -15,7 +15,7 @@ export const CLI_HOME = "~/.forkbomb";
 export const CLI_PROBE = ".git/forkbomb-probe";
 export const CONTRACT_ADDRESS = ""; // set at coin launch; empty renders the "launching" state
 export const TOKEN_MEMO_PREFIX = "forkbomb:"; // burn memo is `forkbomb:<workspaceId>`; must equal `${BRAND.slug}:` (lib/server/config.ts, pinned by a test)
-export const APP_URL = "/app"; // "Connect wallet" and "Open app" both go here
+export const APP_URL = "/app"; // both nav CTAs go here
 export const REPLAY_URL = "/replay"; // full replay UI. next.config.mjs rewrites it to the static file; use a plain <a>
 export const REPLAY_EMBED_URL = "/replay/index.html?embed=1"; // chromeless tree, scales to fit its frame
 
@@ -174,7 +174,7 @@ export const RUN_PS: {
 ];
 export const RUN_END_S = 38.5; // when the judge passed 1.04 and killed the rest
 
-export const TEST_COUNT = 119; // tests in the CLI suite (`npx vitest list` at the repo root); test/site.test.ts checks it
+export const TEST_COUNT = 149; // tests in the CLI suite (`npx vitest list` at the repo root); test/site.test.ts checks it
 
 // Real terminal transcript of RUN (trimmed). Tones map to <Terminal> line tones.
 export const RUN_TRANSCRIPT: {
@@ -223,11 +223,16 @@ export const NAV: NavLink[] = [
 
 export const TOKEN_LINK: NavLink = { label: "$FORKBOMB", href: "/token" };
 
-/** Nav calls to action. Both open /app (live; burns inside it stay closed until the token launches). */
-export const NAV_CTA = {
-  wallet: { label: "Connect wallet", href: APP_URL },
+/**
+ * Nav calls to action. Both open /app. Until the token launches, /app has no wallet step (burns are closed), so the
+ * second CTA offers what it does give: an API key. It becomes "Connect wallet" when burns open.
+ */
+export const NAV_CTA: Record<"wallet" | "app", NavLink & { icon?: "wallet" | "key" }> = {
+  wallet: STATUS.tokenLive
+    ? { label: "Connect wallet", href: APP_URL, icon: "wallet" }
+    : { label: "Get an API key", href: APP_URL, icon: "key" },
   app: { label: "Open app", href: APP_URL },
-} as const;
+};
 
 export const FOOTER: { title: string; links: NavLink[] }[] = [
   {

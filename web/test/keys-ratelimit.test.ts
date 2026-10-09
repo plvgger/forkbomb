@@ -4,6 +4,7 @@ import type { Db } from "../lib/server/db";
 import { ApiError } from "../lib/server/http";
 import {
   authenticate,
+  FAILED_AUTH_PER_MINUTE,
   findWorkspaceByKey,
   generateApiKey,
   hashApiKey,
@@ -11,6 +12,7 @@ import {
   hashIp,
   isWellFormedKey,
   randomBase62,
+  resetFailedAuth,
 } from "../lib/server/keys";
 import { enforce, hit, pruneRateLimits } from "../lib/server/ratelimit";
 import { freshDb, newWorkspace } from "./helpers";
@@ -66,6 +68,29 @@ describe("API keys", () => {
       expect((err as ApiError).status).toBe(401);
       expect((err as ApiError).code).toBe("invalid_api_key");
     }
+  });
+
+  // Regression: every well-formed random key cost a database lookup, with no limit on /api/v1/me or /usage.
+  it("refuses an address that keeps sending wrong keys, without touching the database", async () => {
+    resetFailedAuth();
+    const ws = await newWorkspace();
+    const t0 = Date.parse("2026-10-06T12:00:00Z");
+    const from = (ip: string, key: string) =>
+      new Request("https://x.test/api/v1/me", { headers: { authorization: `Bearer ${key}`, "x-forwarded-for": ip } });
+    const status = (ip: string, key: string, now: number) =>
+      authenticate(from(ip, key), now).then(() => 200, (e: unknown) => (e as ApiError).status);
+    // A missing or malformed key costs no lookup, so it never counts.
+    for (let i = 0; i < FAILED_AUTH_PER_MINUTE + 5; i++) expect(await status("198.51.100.7", "nope", t0)).toBe(401);
+    for (let i = 0; i < FAILED_AUTH_PER_MINUTE; i++) expect(await status("198.51.100.7", generateApiKey(), t0)).toBe(401);
+    const spy = vi.spyOn(db, "query");
+    const limited = await authenticate(from("198.51.100.7", ws.apiKey), t0 + 1_000).catch((e: unknown) => e as ApiError);
+    expect(limited).toMatchObject({ status: 429, code: "rate_limited", headers: { "Retry-After": "59" } });
+    expect(spy).not.toHaveBeenCalled();
+    expect(await status("198.51.100.8", ws.apiKey, t0 + 1_000)).toBe(200); // other addresses are unaffected
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+    expect(await status("198.51.100.7", ws.apiKey, t0 + 60_000)).toBe(200); // and the window ends
+    resetFailedAuth();
   });
 
   it("requires KEY_PEPPER in production", () => {

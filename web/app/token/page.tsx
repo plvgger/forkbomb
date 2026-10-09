@@ -43,7 +43,9 @@ const LOOP: {
     n: "01",
     icon: "terminal",
     title: "Open a workspace",
-    body: "In the app, at launch. You get a workspace ID and an API key for the CLI.",
+    body: STATUS.appLive
+      ? "In the app. You get a workspace ID and an API key for the CLI."
+      : "In the app, at launch. You get a workspace ID and an API key for the CLI.",
     code: "ws_…",
   },
   {
@@ -73,7 +75,7 @@ const PRICE_RULES: { k: string; v: string }[] = [
   { k: "window", v: "15 minutes before your burn to 5 minutes after it." },
   {
     k: "price",
-    v: "Anchored to the last sample before the burn (at most 30 minutes old). The window's time-weighted average and later prices can only lower it.",
+    v: "Anchored to the last sample before the burn (at most 30 minutes old; with none, one taken within 5 seconds after it). The window's time-weighted average and later prices can only lower it.",
   },
   {
     k: "sources",
@@ -278,8 +280,8 @@ export default function TokenPage() {
                 </Badge>
                 <span className="label">burn-for-compute · Solana</span>
               </div>
-              <PixelHeading as="h1" size="display" glow id="token-title">
-                Burn it.
+              <PixelHeading as="h1" size="display" glow id="token-title" className={s.heroTitle}>
+                Burn it.{" "}
                 <br />
                 <span className="hl">Get compute.</span>
               </PixelHeading>

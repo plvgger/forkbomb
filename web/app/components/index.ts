@@ -28,4 +28,5 @@ export { ScrollHints } from "./ScrollHints";
 export { CopyButton } from "./CopyButton";
 export { Reveal } from "./Reveal";
 export { SiteNav } from "./SiteNav";
+export { monoTicker } from "./ticker";
 export { SiteFooter } from "./SiteFooter";

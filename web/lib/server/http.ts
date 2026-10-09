@@ -1,5 +1,7 @@
 // JSON responses and errors for route handlers. Every error uses the OpenAI shape
 // {"error":{"message","type","code"}} so the gateway and the site speak one format. No stack traces leak.
+// That covers wrong methods (otherMethods) and unknown /api paths (app/api/[...path]). The one exception is the
+// platform's own plain-text 413 for bodies over Vercel's 4.5 MB limit, which never reaches a handler.
 
 export type ErrorType =
   | "invalid_request_error"
@@ -67,6 +69,28 @@ export function handler<A extends unknown[]>(
       return errorResponse(err);
     }
   };
+}
+
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+const METHODS: readonly Method[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+type RouteHandler = (req: Request) => Promise<Response>;
+
+/**
+ * Handlers for every method a route doesn't serve: a JSON 405 with an Allow header (Next.js alone answers an empty
+ * 405), and an OPTIONS naming the real methods. Spread into the route's exports next to its real handlers:
+ * `export const { GET, PUT, PATCH, DELETE, OPTIONS } = otherMethods("POST");`
+ */
+export function otherMethods<A extends Method>(...allowed: A[]): Record<Exclude<Method, A> | "OPTIONS", RouteHandler> {
+  const served: readonly Method[] = allowed;
+  const allow = [...served, ...(served.includes("GET") ? ["HEAD"] : []), "OPTIONS"].join(", ");
+  const notAllowed: RouteHandler = async (req) =>
+    json(new ApiError(405, "method_not_allowed", `${req.method} isn't supported here. Use ${served.join(" or ")}.`).toJSON(), {
+      status: 405,
+      headers: { Allow: allow },
+    });
+  const out: Record<string, RouteHandler> = { OPTIONS: async () => new Response(null, { status: 204, headers: { Allow: allow } }) };
+  for (const m of METHODS) if (!served.includes(m)) out[m] = notAllowed;
+  return out as Record<Exclude<Method, A> | "OPTIONS", RouteHandler>;
 }
 
 /** Parse a small JSON object body. Rejects non-objects and bodies over maxBytes. */

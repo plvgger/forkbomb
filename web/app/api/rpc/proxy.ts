@@ -1,6 +1,7 @@
-// A narrow JSON-RPC proxy to SOLANA_RPC_URL for the /app wallet panel, so the browser never needs the
-// (keyed) RPC URL. Only the read calls the burn flow makes (app/app/_lib/rpc.ts) are allowed, token
-// account reads are pinned to TOKEN_MINT, and sending goes through the wallet.
+// A narrow JSON-RPC proxy to SOLANA_PROXY_RPC_URL (default SOLANA_RPC_URL) for the /app wallet panel, so the
+// browser never needs the (keyed) RPC URL. Only the read calls the burn flow makes (app/app/_lib/rpc.ts) are
+// allowed, token account reads are pinned to TOKEN_MINT, and sending goes through the wallet. Only this site's own
+// pages may call it (assertSameSite): other sites can't spend its RPC quota through their visitors' browsers.
 
 import { getConfig } from "@/lib/server/config";
 import { ApiError } from "@/lib/server/http";
@@ -16,6 +17,23 @@ const MAX_SIGNATURES = 16;
 const UPSTREAM_TIMEOUT_MS = 10_000;
 
 export type RpcCall = { id: string | number | null; method: string; params: unknown[] };
+
+/**
+ * Refuses calls another site's page makes through a visitor's browser. A JSON content type makes a cross-origin
+ * browser call preflight, and this route answers no CORS, so the browser never sends it; a text/plain "simple"
+ * request would skip that. Sec-Fetch-Site (sent by every current browser) refuses the rest outright. Clients
+ * that send neither header, like curl, are left to the rate limits.
+ */
+export function assertSameSite(req: Request): void {
+  const type = (req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (type !== "application/json") {
+    throw new ApiError(415, "unsupported_media_type", "Send the call as Content-Type: application/json.");
+  }
+  const site = req.headers.get("sec-fetch-site");
+  if (site && site !== "same-origin" && site !== "none") {
+    throw new ApiError(403, "cross_site", "This RPC proxy only serves this site's own pages.");
+  }
+}
 
 /** Validates one JSON-RPC 2.0 call against the allowlist. Batches are rejected before this (not an object). */
 export function parseRpcCall(body: Record<string, unknown>): RpcCall {
@@ -53,7 +71,7 @@ export function parseRpcCall(body: Record<string, unknown>): RpcCall {
 export async function forwardRpc(call: RpcCall): Promise<Record<string, unknown>> {
   let res: Response;
   try {
-    res = await fetch(getConfig().solanaRpcUrl, {
+    res = await fetch(getConfig().proxyRpcUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: call.method, params: call.params }),

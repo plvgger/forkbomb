@@ -1,6 +1,6 @@
 import { verifyBurn } from "@/lib/server/burns";
 import { ensureFreshSample } from "@/lib/server/price";
-import { ApiError, clientIp, handler, json, readJsonObject } from "@/lib/server/http";
+import { ApiError, clientIp, handler, json, otherMethods, readJsonObject } from "@/lib/server/http";
 import { hashIp } from "@/lib/server/keys";
 import { enforce } from "@/lib/server/ratelimit";
 
@@ -18,3 +18,4 @@ export const POST = handler(async (req: Request) => {
   const burn = await verifyBurn(body.signature);
   return json({ burn }, { status: burn.status === "review" ? 202 : 200 });
 });
+export const { GET, PUT, PATCH, DELETE, OPTIONS } = otherMethods("POST");

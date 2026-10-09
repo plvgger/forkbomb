@@ -375,7 +375,7 @@ describe("non-streaming", () => {
     upstream(() => jsonRes(completion({ role: "assistant", content: "y".repeat(300) }, null)));
     const res = await send(chatReq(hello));
     expect(res.status).toBe(200);
-    const est = parseChatRequest(hello).estimatedInputTokens;
+    const est = parseChatRequest(hello).billedInputTokens;
     expect(await getBalance(ws.id)).toBe(1_000_000 - costMicroUsd(est, 100));
   });
 });
@@ -455,7 +455,7 @@ describe("streaming", () => {
 
     await until(async () => (await reservations())[0]!.status !== "active");
     expect(calls[0]!.signal.aborted).toBe(true); // the GPU stops generating
-    const est = parseChatRequest(body).estimatedInputTokens;
+    const est = parseChatRequest(body).billedInputTokens;
     const [row] = await usageRows();
     expect(row!.status).toBe("error");
     expect(row!.input_tokens).toBe(est);
@@ -611,6 +611,67 @@ describe("operator settings and background work", () => {
     await fund(1_000_000);
     expect(await (await send(chatReq(hello))).text()).not.toContain("system_fingerprint");
     expect(await (await send(chatReq({ ...hello, stream: true }))).text()).not.toContain("system_fingerprint");
+  });
+
+  // Regression: every vLLM-only field passed through, naming the inference stack (and routed_experts, the
+  // model's architecture), although the gateway already deleted system_fingerprint for that reason.
+  it("returns only OpenAI's fields from answers and stream chunks, tool calls and reasoning intact", async () => {
+    const vllmChoice = { stop_reason: null, token_ids: [1, 2], routed_experts: [[3, 4]] };
+    const vllmTop = { prompt_token_ids: [9, 9], prompt_text: "<|im_start|>user", kv_transfer_params: null, metrics: {}, service_tier: null };
+    const toolCall = { id: "call_1", type: "function", index: 0, function: { name: "edit_file", arguments: "{}" } };
+    upstream((call) =>
+      call.body.stream
+        ? sse(
+            [
+              `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, model: UPSTREAM_MODEL, ...vllmTop, choices: [{ index: 0, delta: { content: "hi", reasoning: null }, logprobs: null, finish_reason: null, ...vllmChoice }] })}\n\n`,
+              usageChunk(10, 1),
+              "data: [DONE]\n\n",
+            ],
+            call.signal,
+          )
+        : jsonRes({
+            ...completion({ role: "assistant", content: null, reasoning: null, reasoning_content: "think", tool_calls: [toolCall] }),
+            ...vllmTop,
+            choices: [
+              { index: 0, message: { role: "assistant", content: null, reasoning: null, reasoning_content: "think", tool_calls: [toolCall] }, logprobs: null, finish_reason: "tool_calls", ...vllmChoice },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, prompt_tokens_details: null },
+          }),
+    );
+    await fund(1_000_000);
+    const body = (await (await send(chatReq(hello))).json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      id: "chatcmpl-1",
+      object: "chat.completion",
+      created: 1,
+      model: "forkbomb-hosted",
+      choices: [
+        { index: 0, message: { role: "assistant", content: null, reasoning_content: "think", tool_calls: [toolCall] }, logprobs: null, finish_reason: "tool_calls" },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    });
+    const text = await (await send(chatReq({ ...hello, stream: true }))).text();
+    for (const leak of ["prompt_token_ids", "prompt_text", "token_ids", "routed_experts", "stop_reason", "kv_transfer_params", "metrics", "reasoning"]) {
+      expect(text, leak).not.toContain(leak);
+    }
+    const first = JSON.parse(text.split("\n\n")[0]!.slice(6)) as Record<string, unknown>;
+    expect(first).toEqual({
+      id: "c1",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "forkbomb-hosted",
+      choices: [{ index: 0, delta: { content: "hi" }, logprobs: null, finish_reason: null }],
+    });
+  });
+
+  it("rewords chat-template rejections instead of quoting the template", async () => {
+    upstream(() => jsonRes({ object: "error", message: "No user query found in messages.", type: "BadRequestError", code: 400 }, 400));
+    await fund(1_000_000);
+    const res = await send(chatReq({ ...hello, messages: [{ role: "system", content: "only a system turn" }] }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: { code: "upstream_rejected", message: "The hosted model rejected the request: messages must include at least one user message." },
+    });
   });
 
   it("hands the platform background work that ends after the settle, and a failing hook never breaks the request", async () => {

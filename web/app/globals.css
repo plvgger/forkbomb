@@ -335,6 +335,8 @@ main:focus, main:focus-visible, [tabindex="-1"]:focus-visible { outline: none; }
 .pixel-heading--glow { text-shadow: var(--crt-glow-text); }
 .pixel-heading--signal { color: var(--signal); }
 .pixel-heading--signal.pixel-heading--glow { text-shadow: var(--crt-glow-signal); }
+/* The ticker inside pixel type (monoTicker): Pixelify's B reads as G, so "$FORKBOMB" read "$FORKGOMG". */
+.ticker { font-family: var(--font-mono); font-weight: 600; letter-spacing: -0.02em; }
 .pixel-heading--ok { color: var(--ok); }
 .pixel-heading--ok.pixel-heading--glow { text-shadow: var(--crt-glow-ok); }
 .pixel-heading .hl { color: var(--signal); }
@@ -738,7 +740,9 @@ html.js .replay-frame[data-ready] .replay-frame__poster { opacity: 0; visibility
   line-height: 1.3;
 }
 .run-tree__item--body .run-tree__card { border-style: dashed; }
-.run-tree__item--cut .run-tree__card { opacity: 0.62; }
+/* Killed forks recede by surface and border, never by opacity: their text keeps AA contrast. */
+.run-tree__item--cut .run-tree__card { background: var(--bg-raised); border-color: var(--border); }
+.run-tree__item--cut .run-tree__id { color: var(--text-2); }
 .run-tree__item--won .run-tree__card { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok-line), 0 0 28px rgba(60, 242, 180, 0.16); }
 .run-tree__id { font-weight: 600; color: var(--text); }
 .run-tree__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
@@ -862,7 +866,8 @@ html.js .replay-frame[data-ready] .replay-frame__poster { opacity: 0; visibility
 .hazard--lg { --hz-h: 32px; }
 /* A labelled stripe is always tall enough for a readable (>= 14px) label on its solid backing. */
 .hazard:has(> .hazard__label) { height: max(var(--hz-h), 30px); }
-.hazard__label { padding: 0.2em var(--space-3); background: var(--bg); color: var(--signal); font: 500 var(--text-sm)/1.3 var(--font-pixel); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+/* Mono, not pixel: at this size Pixelify's B reads as G ("$FORKGOMG · GURN FOR COMPUTE"). */
+.hazard__label { padding: 0.2em var(--space-3); background: var(--bg); color: var(--signal); font: 600 var(--text-sm)/1.3 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
 .hazard--lg .hazard__label { font-size: var(--text-base); }
 
 /* Marquee (components/Marquee.tsx) */

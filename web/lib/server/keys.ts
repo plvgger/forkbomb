@@ -3,7 +3,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { BRAND, getKeyPepper } from "./config";
 import { getDb, iso } from "./db";
-import { ApiError } from "./http";
+import { ApiError, clientIp } from "./http";
 
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
@@ -71,10 +71,46 @@ export function bearerToken(req: Request): string | null {
   return m ? m[1]! : null;
 }
 
-/** The workspace for a request's Bearer key. Throws ApiError 401 invalid_api_key. */
-export async function authenticate(req: Request): Promise<Workspace> {
+/** Well-formed keys one IP may get wrong per minute (per instance) before it is refused without a lookup. */
+export const FAILED_AUTH_PER_MINUTE = 30;
+const FAILED_AUTH_WINDOW_MS = 60_000;
+const MAX_TRACKED_IPS = 10_000;
+/**
+ * Counted in memory, per instance: every well-formed key costs a database lookup, and a limit counted in the
+ * database would add a write to each request instead of saving one. Only lookups count (a missing or malformed
+ * key never reaches the database), so one address flooding random keys stops costing queries.
+ */
+const failedAuth = new Map<string, { start: number; count: number }>();
+
+/** For tests. */
+export const resetFailedAuth = () => failedAuth.clear();
+
+function noteFailedAuth(ip: string, now: number): void {
+  const f = failedAuth.get(ip);
+  if (f && now - f.start < FAILED_AUTH_WINDOW_MS) {
+    f.count++;
+    return;
+  }
+  if (failedAuth.size >= MAX_TRACKED_IPS) {
+    for (const [k, v] of failedAuth) if (now - v.start >= FAILED_AUTH_WINDOW_MS) failedAuth.delete(k);
+    if (failedAuth.size >= MAX_TRACKED_IPS) failedAuth.clear();
+  }
+  failedAuth.set(ip, { start: now, count: 1 });
+}
+
+/** The workspace for a request's Bearer key. Throws ApiError 401 invalid_api_key, or 429 after too many wrong keys. */
+export async function authenticate(req: Request, now: number = Date.now()): Promise<Workspace> {
+  const ip = hashIp(clientIp(req));
+  const f = failedAuth.get(ip);
+  if (f && now - f.start < FAILED_AUTH_WINDOW_MS && f.count >= FAILED_AUTH_PER_MINUTE) {
+    const retry = Math.max(1, Math.ceil((f.start + FAILED_AUTH_WINDOW_MS - now) / 1000));
+    throw new ApiError(429, "rate_limited", `Too many invalid API keys from this address. Retry in ${retry}s.`, {
+      "Retry-After": String(retry),
+    });
+  }
   const key = bearerToken(req);
   const ws = key ? await findWorkspaceByKey(key) : null;
+  if (!ws && key && isWellFormedKey(key)) noteFailedAuth(ip, now);
   if (!ws) {
     throw new ApiError(401, "invalid_api_key", "Missing or invalid API key. Send Authorization: Bearer <key>.", {
       "WWW-Authenticate": "Bearer",

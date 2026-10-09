@@ -1,6 +1,7 @@
 import type { ElementType, ReactNode } from "react";
 import { cx } from "./cx";
 import { Icon } from "./Icon";
+import { monoTicker } from "./ticker";
 
 /* ---------- Badge ---------- */
 /** accent/ok = green (exit 0, pass). signal/danger = orange (forks, kills, brand). */
@@ -133,7 +134,7 @@ export function SectionHeader({
     <header className={cx("section-header", align === "center" && "section-header--center", className)}>
       {eyebrow && <Eyebrow index={index}>{eyebrow}</Eyebrow>}
       <Heading id={id} className={Heading === "h1" ? "h1" : "h2"}>
-        {title}
+        {monoTicker(title)}
       </Heading>
       {lede && <p className="lede">{lede}</p>}
       {actions && <div className="section-header__actions">{actions}</div>}
@@ -163,7 +164,7 @@ export function PageHeader({
       <Container size={size}>
         <div className="page-header__inner">
           {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
-          <h1 className="h1">{title}</h1>
+          <h1 className="h1">{monoTicker(title)}</h1>
           {lede && <p className="lede">{lede}</p>}
           {actions && <div className="cluster mt-2">{actions}</div>}
           {meta && meta.length > 0 && (

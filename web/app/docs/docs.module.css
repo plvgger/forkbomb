@@ -204,7 +204,8 @@
 }
 .h2:hover .anchor, .h3:hover .anchor, .anchor:focus-visible { opacity: 1; }
 .anchor:hover { color: var(--text); }
-@media (hover: none) { .anchor { opacity: 0.5; } }
+/* No hover on touch: show the link at full --text-3 (5:1), not dimmed below AA. */
+@media (hover: none) { .anchor { opacity: 1; } }
 
 /* ---------- Doc flow and typography ---------- */
 .flow { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
@@ -469,6 +470,29 @@
   font-family: var(--font-mono);
   font-size: var(--text-xs) !important;
   color: var(--text) !important;
+}
+/* A --flag inside table text: never broken after its dashes. */
+.doc .flagInline { white-space: nowrap; }
+
+/* Phones: each row becomes a labelled card instead of a table that hides columns behind a sideways scroll
+   (the doctor table's "If it fails" column holds the fix). Same pattern as /token's engine table. */
+@media (max-width: 599px) {
+  .table, .table tbody, .table tr, .table td { display: block; width: 100%; min-width: 0; }
+  .table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .flagTable { table-layout: auto; }
+  .table tr { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+  .table tbody tr:last-child { border-bottom: 0; }
+  .table.table td { border-bottom: 0; padding-block: var(--space-1); white-space: normal; }
+  .table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font: 500 var(--text-2xs)/1.3 var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .table tbody tr:hover td { background: none; }
 }
 
 /* ---------- Command synopsis ---------- */

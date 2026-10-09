@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { getConfig } from "@/lib/server/config";
 import { expireStaleReservations } from "@/lib/server/credits";
-import { ApiError, handler, json } from "@/lib/server/http";
+import { ApiError, handler, json, otherMethods } from "@/lib/server/http";
 import { PriceError, priceToString, samplePrice } from "@/lib/server/price";
 import { pruneRateLimits } from "@/lib/server/ratelimit";
 
@@ -39,3 +39,4 @@ async function run(req: Request): Promise<Response> {
 
 export const GET = handler(run);
 export const POST = handler(run);
+export const { PUT, PATCH, DELETE, OPTIONS } = otherMethods("GET", "POST");

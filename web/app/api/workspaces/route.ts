@@ -1,4 +1,4 @@
-import { handler, json, readJsonObject, clientIp } from "@/lib/server/http";
+import { clientIp, handler, json, otherMethods, readJsonObject } from "@/lib/server/http";
 import { hashIp } from "@/lib/server/keys";
 import { enforce } from "@/lib/server/ratelimit";
 import { burnMemo, createWorkspace, parseLabel } from "@/lib/server/workspaces";
@@ -15,3 +15,4 @@ export const POST = handler(async (req: Request) => {
   const { workspace, apiKey } = await createWorkspace({ label, ipHash });
   return json({ workspace, apiKey, burnMemo: burnMemo(workspace.id) }, { status: 201 });
 });
+export const { GET, PUT, PATCH, DELETE, OPTIONS } = otherMethods("POST");

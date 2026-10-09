@@ -1,4 +1,4 @@
-import { handler, json, PUBLIC_SHORT } from "@/lib/server/http";
+import { handler, json, otherMethods, PUBLIC_SHORT } from "@/lib/server/http";
 import { ensureFreshSample, priceSummary } from "@/lib/server/price";
 
 export const runtime = "nodejs";
@@ -11,3 +11,4 @@ export const GET = handler(async () => {
   await ensureFreshSample();
   return json(await priceSummary(), { cache: PUBLIC_SHORT });
 });
+export const { POST, PUT, PATCH, DELETE, OPTIONS } = otherMethods("GET");

@@ -3,7 +3,7 @@
 // src/orchestrator.ts) and the hosted API (app/api/**, lib/server/**).
 // Keep it in sync with both.
 
-import { CLI_HOME, CLI_PROBE, SITE, TOKEN_MEMO_PREFIX } from "../../config";
+import { CLI_HOME, CLI_PROBE, SITE, STATUS, TOKEN_MEMO_PREFIX } from "../../config";
 
 /** Binary name these docs write. Until the npm release, run `node dist/cli.js` in its place. */
 export const BIN = "forkbomb";
@@ -279,7 +279,7 @@ export const DOCTOR_CHECKS: {
   {
     check: "Hosted key and credit",
     verifies: "Optional, only for --engine hosted. If FORKBOMB_API_KEY is set, asks the gateway for your balance.",
-    fix: "Create a workspace at /app (opens at launch)",
+    fix: STATUS.appLive ? "Create a workspace at /app" : "Create a workspace at /app (opens at launch)",
   },
   {
     check: "Isolation canary",
@@ -481,7 +481,7 @@ export const GATEWAY_ERRORS: {
   {
     code: "rate_limited",
     status: 429,
-    meaning: "Per-workspace request limit. Wait for Retry-After.",
+    meaning: "Per-workspace request limit, or too many wrong keys from one address. Wait for Retry-After.",
   },
   {
     code: "upstream_unavailable",

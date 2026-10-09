@@ -28,6 +28,14 @@ export const HEADER_RESERVED = "x-credits-reserved-usd";
 /** The model name clients see. The upstream model name, URL and key never leave the server. */
 export const hostedModel = () => `${BRAND.slug}-hosted`;
 
+/** The hosted model as an OpenAI model object, for GET /api/v1/models. `created` is when the pool went live. */
+export const hostedModelObject = () => ({
+  id: hostedModel(),
+  object: "model" as const,
+  created: Math.floor(Date.UTC(2026, 9, 1) / 1000),
+  owned_by: BRAND.slug,
+});
+
 /**
  * The chat route's maxDuration in seconds. Next.js needs a literal in the route file, so route.ts repeats
  * this number and a test checks the two match.
@@ -80,7 +88,7 @@ export async function chatCompletions(req: Request, options: GatewayOptions = {}
     throw err;
   }
 
-  const meter = new Meter(rsv, cfg, chat.estimatedInputTokens);
+  const meter = new Meter(rsv, cfg, chat.billedInputTokens);
   const target: UpstreamTarget = { baseUrl: cfg.upstream.baseUrl, apiKey: cfg.upstream.apiKey, model: cfg.upstream.model };
   // Non-streaming calls run to completion even if the client leaves, so usage is always real.
   // Streaming calls stop the GPU as soon as the client leaves and bill what was streamed
@@ -145,7 +153,8 @@ class Meter {
   constructor(
     readonly rsv: Reservation,
     private readonly cfg: Config,
-    private readonly estimatedInputTokens: number,
+    /** The calibrated input estimate (not the reservation's upper bound). */
+    private readonly billedInputTokens: number,
   ) {}
 
   get done(): boolean {
@@ -166,10 +175,10 @@ class Meter {
     return this.settled;
   }
 
-  /** Usage when upstream never reported it: the input estimate plus what was generated, at least a token per chunk. */
+  /** Usage when upstream never reported it: the calibrated input estimate plus what was generated, at least a token per chunk. */
   estimate(outputBytes: number, outputChunks: number): Usage {
     return {
-      inputTokens: this.estimatedInputTokens,
+      inputTokens: this.billedInputTokens,
       outputTokens: Math.max(outputChunks, Math.ceil(outputBytes / BYTES_PER_TOKEN)),
     };
   }
@@ -183,13 +192,73 @@ function creditHeaders(s: Settlement | null): Record<string, string> {
 const withHeaders = (err: ApiError, headers: Record<string, string>) =>
   new ApiError(err.status, err.code, err.message, { ...err.headers, ...headers });
 
+/**
+ * Only OpenAI's own fields go back to the client. vLLM adds its own (prompt_token_ids, prompt_text, token_ids,
+ * stop_reason, routed_experts, kv_transfer_params, system_fingerprint, ...), which name the inference server and
+ * show the model's architecture. Reasoning text stays (it is billed as output), as reasoning_content or reasoning.
+ */
+const TOP_FIELDS = ["id", "object", "created", "model", "choices", "usage"];
+const CHOICE_FIELDS = ["index", "message", "delta", "finish_reason", "logprobs"];
+const MESSAGE_FIELDS = ["role", "content", "tool_calls", "refusal", "reasoning_content", "reasoning"];
+const TOOL_CALL_FIELDS = ["index", "id", "type", "function"];
+const FUNCTION_FIELDS = ["name", "arguments"];
+const USAGE_FIELDS = ["prompt_tokens", "completion_tokens", "total_tokens"];
+/** Dropped when null: OpenAI never sends them as null, vLLM does. */
+const DROP_NULL = new Set(["reasoning_content", "reasoning", "refusal"]);
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+function pick(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (k in obj && !(obj[k] === null && DROP_NULL.has(k))) out[k] = obj[k];
+  return out;
+}
+
+function pickMessage(m: unknown): unknown {
+  if (!isObject(m)) return m;
+  const out = pick(m, MESSAGE_FIELDS);
+  if (Array.isArray(out.tool_calls)) {
+    out.tool_calls = out.tool_calls.map((tc: unknown) => {
+      if (!isObject(tc)) return tc;
+      const call = pick(tc, TOOL_CALL_FIELDS);
+      if (isObject(call.function)) call.function = pick(call.function, FUNCTION_FIELDS);
+      return call;
+    });
+  }
+  return out;
+}
+
+/** An answer or stream chunk with only OpenAI's fields, the model renamed. */
+export function openaiShape(body: Record<string, unknown>): Record<string, unknown> {
+  const out = pick(body, TOP_FIELDS);
+  if ("model" in out) out.model = hostedModel();
+  if (Array.isArray(out.choices)) {
+    out.choices = out.choices.map((c: unknown) => {
+      if (!isObject(c)) return c;
+      const choice = pick(c, CHOICE_FIELDS);
+      if ("message" in choice) choice.message = pickMessage(choice.message);
+      if ("delta" in choice) choice.delta = pickMessage(choice.delta);
+      return choice;
+    });
+  }
+  if (isObject(out.usage)) out.usage = pick(out.usage, USAGE_FIELDS);
+  return out;
+}
+
+/**
+ * Upstream rejections that quote the model's chat template (and so name its family), reworded as what to fix.
+ * Anything else passes through scrubbed.
+ */
+const TEMPLATE_ERRORS: [RegExp, string][] = [[/no user query found in messages/i, "messages must include at least one user message."]];
+const rejectionDetail = (detail: string) => TEMPLATE_ERRORS.find(([re]) => re.test(detail))?.[1] ?? detail;
+
 /** Maps an upstream error status to what the client sees. The client is never charged for these. */
 async function upstreamFailure(res: Response, target: UpstreamTarget): Promise<ApiError> {
   const text = await res.text().catch(() => "");
   const detail = scrub(upstreamErrorMessage(text), target);
   const s = res.status;
   if (s === 400 || s === 413 || s === 422) {
-    return new ApiError(400, "upstream_rejected", `The hosted model rejected the request${detail ? `: ${detail}` : "."}`);
+    return new ApiError(400, "upstream_rejected", `The hosted model rejected the request${detail ? `: ${rejectionDetail(detail)}` : "."}`);
   }
   if (s === 429) {
     return new ApiError(503, "upstream_busy", "The hosted GPU pool is at capacity. Retry shortly.", {
@@ -240,9 +309,7 @@ async function completeResponse(res: Response, meter: Meter, call: UpstreamCall)
     usage = meter.estimate(bytes, 0);
   }
   const s = await meter.settle(usage, "ok");
-  body.model = hostedModel();
-  delete body.system_fingerprint; // names the inference server and its version
-  return json(body, { headers: { ...creditHeaders(s), "x-request-id": meter.rsv.id } });
+  return json(openaiShape(body), { headers: { ...creditHeaders(s), "x-request-id": meter.rsv.id } });
 }
 
 /**
@@ -310,8 +377,7 @@ function streamResponse(res: Response, chat: ChatRequest, meter: Meter, call: Up
         }
       }
     }
-    if ("model" in obj) obj.model = hostedModel();
-    delete obj.system_fingerprint;
+    obj = openaiShape(obj);
     if (!chat.includeUsage && "usage" in obj) {
       // The client did not ask for the usage chunk: some clients break on a chunk with no choices.
       if (Array.isArray(obj.choices) && obj.choices.length === 0) return null;

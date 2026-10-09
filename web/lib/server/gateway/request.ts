@@ -13,6 +13,12 @@ export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const MAX_MESSAGES = 2048;
 /** Conservative: code and English run ~4 bytes per token, so 3 over-reserves. CJK is ~3 bytes per char and token. */
 export const BYTES_PER_TOKEN = 3;
+/**
+ * Calibrated, for billing input when upstream never reports usage (a killed or cut-off stream): code and English
+ * run ~4 bytes per token, and the prompt's JSON keys stand in for the chat template's per-message tokens. Billing
+ * at the reservation's 3 bytes plus padding charged a killed fork about 1.3x its real input, 2x on short prompts.
+ */
+export const BILLED_BYTES_PER_TOKEN = 4;
 const PER_MESSAGE_TOKENS = 8;
 const BASE_TOKENS = 16;
 
@@ -37,7 +43,10 @@ export type ChatRequest = {
   /** The client asked for the final usage chunk of a stream (stream_options.include_usage). */
   includeUsage: boolean;
   maxTokens: number;
+  /** Upper bound on prompt tokens, for the reservation. */
   estimatedInputTokens: number;
+  /** Best guess at prompt tokens, billed only when upstream never reports usage. Never above estimatedInputTokens. */
+  billedInputTokens: number;
   /** Upstream body without model, stream and stream_options, which the gateway sets. */
   body: Record<string, unknown>;
 };
@@ -76,7 +85,7 @@ export function parseChatRequest(raw: Record<string, unknown>): ChatRequest {
   for (const key of PASSTHROUGH) if (raw[key] !== undefined) body[key] = raw[key];
   body.max_tokens = maxTokens;
 
-  return { stream, includeUsage, maxTokens, estimatedInputTokens: estimateInputTokens(body), body };
+  return { stream, includeUsage, maxTokens, estimatedInputTokens: estimateInputTokens(body), billedInputTokens: billedInputTokens(body), body };
 }
 
 function parseMaxTokens(raw: unknown): number {
@@ -87,12 +96,21 @@ function parseMaxTokens(raw: unknown): number {
   return Math.min(raw, MAX_OUTPUT_TOKENS);
 }
 
-/** Upper-bound guess at prompt tokens: everything the model reads (messages, tools, formats) at BYTES_PER_TOKEN. */
-export function estimateInputTokens(body: Record<string, unknown>): number {
+/** Bytes of everything the model reads: messages, tools, tool choice and response format. */
+function promptBytes(body: Record<string, unknown>): number {
   const { messages, tools, tool_choice, response_format } = body;
-  const bytes = utf8Bytes(JSON.stringify([messages, tools ?? null, tool_choice ?? null, response_format ?? null]));
-  const count = Array.isArray(messages) ? messages.length : 0;
-  return BASE_TOKENS + count * PER_MESSAGE_TOKENS + Math.ceil(bytes / BYTES_PER_TOKEN);
+  return utf8Bytes(JSON.stringify([messages, tools ?? null, tool_choice ?? null, response_format ?? null]));
+}
+
+/** Upper-bound guess at prompt tokens: everything the model reads at BYTES_PER_TOKEN, plus padding. */
+export function estimateInputTokens(body: Record<string, unknown>): number {
+  const count = Array.isArray(body.messages) ? body.messages.length : 0;
+  return BASE_TOKENS + count * PER_MESSAGE_TOKENS + Math.ceil(promptBytes(body) / BYTES_PER_TOKEN);
+}
+
+/** Calibrated guess at prompt tokens (BILLED_BYTES_PER_TOKEN, no padding), for billing without upstream usage. */
+export function billedInputTokens(body: Record<string, unknown>): number {
+  return Math.ceil(promptBytes(body) / BILLED_BYTES_PER_TOKEN);
 }
 
 export type Usage = { inputTokens: number; outputTokens: number };

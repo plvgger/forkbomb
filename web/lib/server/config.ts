@@ -20,7 +20,10 @@ export const DEV_KEY_PEPPER = "dev-only-pepper-do-not-use-in-production";
 export type Config = {
   /** SPL mint of the token. Empty until launch: burns and price sampling are disabled. */
   tokenMint: string;
+  /** Burn verification and the token info read. */
   solanaRpcUrl: string;
+  /** What the public /api/rpc proxy forwards to. Defaults to solanaRpcUrl; a separate key keeps abuse of the proxy off verification's quota. */
+  proxyRpcUrl: string;
   keyPepper: string;
   cronSecret: string;
   /** Operator secret for POST /api/admin/grant. Under 32 characters disables the route. */
@@ -56,6 +59,8 @@ export type Config = {
     verifyPerMinute: number;
     gatewayPerMinute: number;
     rpcPerMinute: number;
+    /** All /api/rpc calls together, across every IP. */
+    rpcGlobalPerMinute: number;
   };
 };
 
@@ -79,9 +84,11 @@ const isBuildPhase = () => process.env.NEXT_PHASE === "phase-production-build";
 export function getConfig(): Config {
   const env = process.env;
   const upstreamUrl = (env.UPSTREAM_BASE_URL || "").trim().replace(/\/+$/, "");
+  const solanaRpcUrl = (env.SOLANA_RPC_URL || "").trim() || PUBLIC_MAINNET_RPC;
   return {
     tokenMint: (env.TOKEN_MINT || "").trim(),
-    solanaRpcUrl: (env.SOLANA_RPC_URL || "").trim() || PUBLIC_MAINNET_RPC,
+    solanaRpcUrl,
+    proxyRpcUrl: (env.SOLANA_PROXY_RPC_URL || "").trim() || solanaRpcUrl,
     keyPepper: env.KEY_PEPPER || "",
     cronSecret: env.CRON_SECRET || "",
     adminSecret: env.ADMIN_SECRET || "",
@@ -106,6 +113,7 @@ export function getConfig(): Config {
       verifyPerMinute: positiveInt(env.RATE_VERIFY_PER_MINUTE, 30),
       gatewayPerMinute: positiveInt(env.RATE_GATEWAY_PER_MINUTE, 120),
       rpcPerMinute: positiveInt(env.RATE_RPC_PER_MINUTE, 120),
+      rpcGlobalPerMinute: positiveInt(env.RATE_RPC_GLOBAL_PER_MINUTE, 1200),
     },
   };
 }

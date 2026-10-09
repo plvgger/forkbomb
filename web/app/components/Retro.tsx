@@ -1,5 +1,6 @@
 import type { ElementType, ReactNode } from "react";
 import { cx } from "./cx";
+import { monoTicker } from "./ticker";
 
 /* ---------- PixelHeading ----------
    Pixel display heading. Wrap words in <span className="hl"> (orange) or
@@ -34,7 +35,7 @@ export function PixelHeading({
         className,
       )}
     >
-      {children}
+      {monoTicker(children)}
     </Tag>
   );
 }
@@ -76,7 +77,7 @@ export function Marquee({
         const t = typeof it === "string" ? undefined : it.tone;
         return (
           <span key={i} className={cx("marquee__item", t && `marquee__item--${t}`)} translate="no">
-            {text}
+            {monoTicker(text)}
           </span>
         );
       })}
