@@ -30,7 +30,7 @@ Retry a coding agent and it tends to fail the same way twice. Forkbomb forks it 
 
 One run becomes N sandboxed copies of your repo, cloned in milliseconds, each driven by a different strategy. They race. Your test suite judges the patch each fork would ship, on a fresh clone. The first fork to pass exits 0, the rest are killed, and the winning patch is yours.
 
-| **45 ms** | **22 MB** | **14/14 · 38.7 s** | **$0.06** |
+| **45 ms** | **22 MB** | **14/14 · 38.7 s** | **$0.09** |
 |:-:|:-:|:-:|:-:|
 | per fork, 80 MB `node_modules` (copy: 1,108 ms) | extra disk for 16 forks (copy: 1.3 GB) | recorded race, 4 forks, from 4/14 | first hosted race, 4 forks, 14/14 |
 
@@ -79,7 +79,7 @@ flowchart LR
 
 1. **Fork.** Forkbomb clones your repo once into pid 1 and commits a base snapshot. It then forks pid 1 into N copies with `clonefile(2)`. On APFS a clone shares every data block with its parent until a fork writes, so a fork costs metadata, not a copy.
 2. **Race.** Each fork is a coding agent with a shell and a file editor, sealed in its own clone, working the task its own way: `surgeon`, `root-cause`, `test-driven`, `rewriter`, `skeptic` and seven more. Eight copies of one strategy fail the same way eight times. Diversity is the point.
-3. **Judge.** When a fork stops, Forkbomb diffs it against the base, drops every change to protected files (tests, test config, manifests, lockfiles), applies the rest to a fresh clone of pid 1 and runs your test command there, sandboxed. A fork is judged by the patch it would ship. Edits to ignored files and planted tests never count. A clean exit with fewer tests than the baseline is not a pass.
+3. **Judge.** When a fork stops, Forkbomb diffs it against the base, drops every change to protected files (tests, test config, setup files, manifests, lockfiles, and any script your test command runs), applies the rest to a fresh clone of pid 1 and runs your test command there, sandboxed. A fork is judged by the patch it would ship. Edits to ignored files and planted tests never count. A clean exit with fewer tests than the baseline is not a pass.
 4. **Kill.** In `race` mode the first fork to pass the full suite exits 0 and the rest are killed mid-thought. In `best` mode every fork finishes and the smallest passing diff wins.
 5. **Grow.** If no fork passes and the round's best fork beat its parent, that fork's verified state (pid 1 plus its patch) becomes the parent of the next round, along with where it left off and the tail of its last test run. Otherwise the next round forks the same parent again, with the next strategies in the rotation.
 
@@ -153,7 +153,7 @@ Watch every tool call at **[forkbomb.fun/replay](https://forkbomb.fun/replay)**.
 
 ### On the hosted engine
 
-Run `20261007-015122`, the first race on the hosted GPU pool: `--engine hosted`, the same `examples/calc` repo, 4 forks cloned in 0.40 ms each, `race` mode. Fork 1.03 (`test-driven`) passed 14/14 with a 92-line patch and the other three were killed. The race took 4 min 33 s and used $0.06 of test credit granted by the operator, since burns open at launch.
+Run `20261007-015122`, the first race on the hosted GPU pool: `--engine hosted`, the same `examples/calc` repo, 4 forks cloned in 0.40 ms each, `race` mode. Fork 1.03 (`test-driven`) passed 14/14 with a 92-line patch and the other three were killed. The race took 4 min 33 s and was billed $0.09 of test credit granted by the operator, since burns open at launch. (The CLI of that day printed $0.06: it left out the killed forks' last turns, which it now counts.)
 
 The [event log](docs/runs/20261007-015122/events.jsonl) and the [winning patch](docs/runs/20261007-015122/winner.patch) are in the repo, updated to the current schema the same way. `forkbomb replay docs/runs/20261007-015122` plays it back.
 
@@ -167,9 +167,9 @@ The engine decides where the model runs and who pays for it. Whichever you pick,
 | Anthropic API | `--engine api` | Forkbomb's tool loop on the Messages API. Default `claude-opus-5-5` at `medium` effort | Your `ANTHROPIC_API_KEY`, pay as you go | Live |
 | Hosted | `--engine hosted` | The same tool loop on the forkbomb.fun gateway (OpenAI-compatible), model `forkbomb-hosted` | Credit from burning $FORKBOMB | GPU pool live. Credit opens when $FORKBOMB launches |
 
-- **Claude Code.** Forks count against your plan's usage limits; eight forks use them about eight times as fast as one session. Before the first run on each Claude Code version, Forkbomb runs an isolation canary: a real session told to escape. Forks start only if every escape attempt failed. Run it any time with `forkbomb canary`.
-- **API.** The key comes from `ANTHROPIC_API_KEY` or `~/.forkbomb/.env`. Pick the model with `--model` and the effort with `--effort`.
-- **Hosted.** Put a workspace key in `FORKBOMB_API_KEY`. `FORKBOMB_HOSTED_URL` overrides the gateway (default `https://forkbomb.fun/api/v1`). `forkbomb credits` shows the balance and pricing. The gateway picks the model, so `--model` is ignored. When credit runs out mid-run, no fork makes another call.
+- **Claude Code.** Forks count against your plan's usage limits; eight forks use them about eight times as fast as one session. `--max-turns` caps each session. Before the first run on each Claude Code version, Forkbomb runs an isolation canary: a real session told to escape. Forks start only if the session tried every escape and each one failed. A session that skips a step proves nothing, so that canary counts as inconclusive and nothing is cached. Run it any time with `forkbomb canary`.
+- **API.** The key comes from `ANTHROPIC_API_KEY` or `~/.forkbomb/.env`, and is checked once before any fork starts. Pick the model with `--model` and the effort with `--effort`.
+- **Hosted.** Put a workspace key in `FORKBOMB_API_KEY`. `FORKBOMB_HOSTED_URL` overrides the gateway (default `https://forkbomb.fun/api/v1`). `forkbomb credits` shows the balance and pricing. The gateway picks the model, so `--model` is ignored. When credit runs out mid-run, no fork makes another call. A killed fork's last turn is still billed for what it streamed, after it hangs up; the run's cost includes it, estimated the way the gateway bills it and then checked against your balance once it settles.
 
 Keys stay on your machine. The Anthropic key goes only to Anthropic, the hosted key only to the gateway, and no key ever reaches a fork. Self-hosting stays free.
 
@@ -181,15 +181,15 @@ Every fork is treated as hostile. A fork is a model running tools on your machin
 |---|---|
 | Writes | Only the fork's clone and its private temp dir. |
 | `.git` | Read-only for forks. Only the judge writes it. |
-| Reads | `api` and `hosted`: nothing under `~` except the clone, its temp dir and toolchain folders (`.nvm`, `.cargo`, `.pyenv`, …). `claude-code`: a deny list covering SSH, cloud and CLI credentials, every `.env` key file in `~` and its dot-folders, Keychains, shell history, app data, Desktop, Documents and Downloads. |
-| Network | Loopback only, with the system DNS resolver blocked. `--network` opts in on `api` and `hosted`. `claude-code`: no outbound network, WebFetch and WebSearch denied. |
+| Reads | `api` and `hosted`: nothing under `~` or the runs folder except the clone, its temp dir and toolchain folders (`.nvm`, `.cargo`, `.pyenv`, …), so other forks and other runs stay private wherever `FORKBOMB_HOME` or `--runs-dir` puts them. `claude-code`: a deny list covering SSH, cloud and CLI credentials, every `.env` key file in `~` and its dot-folders, Keychains, shell history, app data, Desktop, Documents and Downloads. |
+| Network | Loopback only: connections to any other address are refused, by IP as well as by name, and the system DNS resolver is blocked. `--network` opts in on `api` and `hosted`. `claude-code`: no outbound network, WebFetch and WebSearch denied. `forkbomb doctor` checks it. |
 | Environment | Allowlisted. No API keys or tokens reach a fork. |
 | Editor | Every path is re-checked: no `..`, no symlinks out of the clone or into `.git`, no writes through hard links. |
-| Commands | A timeout and an output cap on every command. Background children die with it. |
+| Commands | A timeout and an output cap on every command, 1 GiB per file and a cap on new processes. Background children die with it. Ctrl-C stops every fork and everything it started, and exits 130. |
 | Claude Code | `--safe-mode`, no user or project settings (no CLAUDE.md, hooks, plugins or MCP), Claude Code's own Bash sandbox, permission rules on the file tools, and the canary before first use. |
-| Judge | Runs under Forkbomb's own Seatbelt profile on every engine. Every git call on a fork's clone is sandboxed too. |
+| Judge | Runs under Forkbomb's own Seatbelt profile on every engine. Every git call on a fork's clone is sandboxed too. Edits to tests, test config, setup files and scripts the test command runs are dropped. |
 
-**Limits, stated plainly.** Seatbelt is a macOS mechanism, not a VM: forks share your kernel and your user account. System paths are readable on every engine, and on `claude-code` so is anything under `~` that isn't on the deny list. There are no CPU or memory limits. The judge resists the common ways to game a test suite, not every one: a patch that special-cases your tests' exact inputs will pass, so read the winning patch. `--no-sandbox` exists for development and is not safe. `--engine hosted` sends the task, the code forks read and tool output through the gateway. Run Forkbomb on code you'd let an agent work on.
+**Limits, stated plainly.** Seatbelt is a macOS mechanism, not a VM: forks share your kernel and your user account. System paths and anything outside `~` and the runs folder (other volumes, `/Users/Shared`, `/opt`) are readable on every engine, and on `claude-code` so is anything under `~` that isn't on the deny list. There are no CPU or memory limits, and disk use is capped per file, not per fork: the run stops every fork if the disk is about to fill up. The judge resists the common ways to game a test suite, not every one: the code under test runs inside the test process, so a patch that special-cases your tests' exact inputs, or patches the assertion library from a source file, will pass. Read the winning patch. `--no-sandbox` exists for development and is not safe. `--engine hosted` sends the task, the code forks read and tool output through the gateway. Run Forkbomb on code you'd let an agent work on.
 
 The full threat model is at [forkbomb.fun/security](https://forkbomb.fun/security). Reporting and scope: [SECURITY.md](SECURITY.md).
 
@@ -221,6 +221,8 @@ forkbomb credits                                hosted credit balance and pricin
 forkbomb canary                                 prove Claude Code forks can't escape
 ```
 
+`forkbomb <command> --help` shows one command's options. `export` replaces local paths (your home folder, the run folder, where the repo lives) before it writes anything.
+
 Key `run` flags:
 
 | Flag | Default | What it does |
@@ -237,7 +239,7 @@ Key `run` flags:
 | `--network` | off | Outbound network for forks (`api` and `hosted`) |
 | `--keep-forks` | off | Keep killed forks' clones on disk |
 
-Also `--max-turns` (30), `--fork-timeout` (600 s), `--bash-timeout` (120 s), `--test-timeout` (300 s), `--concurrency` (8) and `--runs-dir`. `forkbomb --help` lists every flag.
+Also `--max-turns` (30), `--fork-timeout` (600 s), `--bash-timeout` (120 s), `--test-timeout` (300 s), `--concurrency` (8) and `--runs-dir`. `forkbomb --help` lists every flag. A test command that can't run (exit 127, a missing npm script) stops the run before any fork starts.
 
 ### Run artifacts
 
@@ -246,7 +248,7 @@ Every run is saved, win or lose:
 ```text
 ~/.forkbomb/runs/<id>/
 ├── events.jsonl    every event of the run; replay and export read it
-├── winner.patch    the passing patch (best.patch when nothing passed)
+├── winner.patch    the passing patch (best.patch when nothing passed but a fork beat the baseline)
 ├── body/           pid 1, the clone every fork descends from
 ├── forks/<id>/     the winning fork's clone (every fork with --keep-forks)
 └── state/<id>/     pid 1 plus the winning patch, as the judge verified it

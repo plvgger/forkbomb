@@ -11,7 +11,7 @@ This document describes the code as it is in 0.1.0. File paths are the source of
 | Fork cost, clonefile vs copy | 45 ms vs 1,108 ms per fork | `forkbomb bench`, 16 forks of an 80 MB, 4,400-file `node_modules` tree, MacBook Air (M2, 24 GB) |
 | Extra disk for those 16 forks | 22 MB vs 1.3 GB | same run |
 | Recorded race (2026-10-05, Claude Code on a Max plan) | 4 forks cloned in 1.13 ms each, baseline 4/14, fork 1.04 passed 14/14 with a 94-line patch, 3 forks killed, 38.7 s | `web/app/config.ts` `RUN`, replay at forkbomb.fun/replay |
-| First hosted race (2026-10-07) | 4 forks cloned in 0.40 ms each, fork 1.03 passed 14/14 with a 92-line patch, 3 forks killed, 4 min 33 s, $0.06 of operator-granted test credit | run `20261007-015122`, log in [`docs/runs/`](runs/20261007-015122/events.jsonl) |
+| First hosted race (2026-10-07) | 4 forks cloned in 0.40 ms each, fork 1.03 passed 14/14 with a 92-line patch, 3 forks killed, 4 min 33 s, $0.09 of operator-granted test credit billed | run `20261007-015122`, log in [`docs/runs/`](runs/20261007-015122/events.jsonl) |
 | Forks per round | 1 to 64 | `src/cli.ts` |
 
 ## Source map
@@ -43,16 +43,18 @@ This document describes the code as it is in 0.1.0. File paths are the source of
 
 ## The run loop
 
-`runRace()` in `src/orchestrator.ts` owns a run from start to finish. `src/cli.ts` validates flags and checks the engine first: Claude Code must be installed and logged in (and pass the canary, see below), the `api` engine needs `ANTHROPIC_API_KEY`, and the `hosted` engine calls `GET /api/v1/me` and refuses to start with an empty balance.
+`runRace()` in `src/orchestrator.ts` owns a run from start to finish. `src/cli.ts` validates every flag first, before any network call, canary or run folder, then checks the engine: Claude Code must be installed and logged in (and pass the canary, see below), the `api` engine needs `ANTHROPIC_API_KEY` and checks it with one free `models.list` call (a 401 or 403 stops the run there), and the `hosted` engine calls `GET /api/v1/me` and refuses to start with an empty balance. The run folder is `<runs>/<id>`, where the id is the start time to the second; a second run in the same second gets `-2`, created with a non-recursive `mkdir` so two runs never share a folder.
 
 1. **pid 1.** The user's repo is forked into `<run>/body`. `initBase()` snapshots it as a commit every fork shares. A `.git` *file* (worktree or submodule) is removed first so nothing is written into another repo, and git runs with hooks, fsmonitor, GPG signing and system config turned off.
-2. **Baseline.** The test command runs once on pid 1, sandboxed. The pass/fail counts become the baseline total that later guards against deleted tests. If the suite already passes, the run ends there.
+2. **Baseline.** The test command runs once on pid 1, sandboxed. The pass/fail counts become the baseline total that later guards against deleted tests. If the suite already passes, the run ends there. If the command itself is broken (`brokenTestCommand()`: exit 126 or 127, an npm, pnpm or yarn script that doesn't exist, or a suite that printed its results and then never exited), no fork starts and the run says to check `--test`. A suite that timed out without printing results still races, with a warning, since the hang may be the bug.
 3. **Fork.** Each round forks the current parent into N clones with ids `<round>.<NN>`. The `fork` event records the time per clone, the logical size and the physical cost (free-space delta on the volume).
 4. **Race.** Every fork starts at once. Fork *i* gets strategy `(i + (round - 1) * N) mod 12`, a per-fork timeout (`--fork-timeout`, default 600 s), and a prompt with the task, the test command, its strategy brief and, from round 2, where the previous round's best fork left off. `--concurrency` (default 8) caps how many forks talk to a model at once.
 5. **Judge.** When a fork's engine returns, the judge scores the patch it would ship (see [The judge](#the-judge)). A fork that hit its timeout is still judged, on a fresh signal.
 6. **Kill.** In `race` mode the first fork to score 1 wins: every fork that is still running or judging is aborted and gets a `kill` event. In `best` mode every fork finishes and the best is picked by score, then the smallest diff, then the earliest finish.
-7. **Grow.** If no fork passes, the round's best verified state (pid 1 plus its patch) becomes the parent of the next round, but only if it beat the parent's score. Rounds stop at `--rounds` (default 2), on a winner, or when hosted credit runs out.
-8. **Finish.** The winning patch is written to `winner.patch` (or the best partial patch to `best.patch`). `--apply` runs `git apply` against your repo, prefixed with the repo's subdirectory when it sits inside a larger git tree. Losing clones and their states are deleted unless `--keep-forks`; per-fork temp dirs always are.
+7. **Grow.** If no fork passes, the round's best verified state (pid 1 plus its patch) becomes the parent of the next round, but only if it beat the parent's score. Rounds stop at `--rounds` (default 2), on a winner, when hosted credit runs out, or when the run is halted (below).
+8. **Finish.** The winning patch is written to `winner.patch`, or, when nothing passed, the best partial patch to `best.patch`, but only if it did better than the baseline: a fork that didn't improve on the unchanged repo isn't called "best". `--apply` runs `git apply` against your repo, prefixed with the repo's subdirectory when it sits inside a larger git tree. Losing clones and their states are deleted unless `--keep-forks`; per-fork temp dirs always are.
+
+**Halting.** Three things stop every fork at once, with a `kill` event for each one still running or judging: an interrupt (`RunOptions.signal`, which the CLI aborts on Ctrl-C, `SIGTERM` or `SIGHUP`), a fork whose engine reports a rejected key (`ForkResult.fatal`: a 401 or 403 from the Anthropic API or the hosted gateway), and free disk space falling below a floor (1 GiB, or half of what was free at the start if that is less), checked before each round and every 2 s during one. An interrupted run applies nothing, still cleans up per `--keep-forks`, and ends with `run_end.interrupted`. The CLI exits 128 + the signal number (130 for Ctrl-C); a second Ctrl-C, or 5 s without the run ending, kills every tracked process group outright. An `exit` handler in `src/cli.ts` kills every group in `src/procs.ts` however the CLI exits, so no fork, test run or Claude Code session outlives it.
 
 ```mermaid
 sequenceDiagram
@@ -112,7 +114,7 @@ At the end of a run, pid 1, the final fork's clone and its state stay on disk. E
 
 Everything that copies a tree goes through one interface, `Forker.fork(src, dsts[])` in `src/fork/forker.ts`. pid 1, every round's forks, and the judge's state and test dirs are all forks.
 
-- **`apfs-clonefile`.** `native/hclone.c` is a 50-line C program: `hclone SRC DST [DST...]` calls `clonefile(2)` with `CLONE_NOFOLLOW` once per destination, times each call with `CLOCK_MONOTONIC`, and prints a JSON array of `{dst, ms, ok, err}`. One process clones the whole round. On APFS a clone shares every data block with its source until one side writes, so a fork costs metadata, not a copy. The helper is compiled with `/usr/bin/clang -O2` on first use and cached as `<home>/bin/hclone-<source mtime>`, so an edit to the source rebuilds it.
+- **`apfs-clonefile`.** `native/hclone.c` is a 50-line C program: `hclone SRC DST [DST...]` calls `clonefile(2)` with `CLONE_NOFOLLOW` once per destination, times each call with `CLOCK_MONOTONIC`, and prints a JSON array of `{dst, ms, ok, err}`. One process clones the whole round. On APFS a clone shares every data block with its source until one side writes, so a fork costs metadata, not a copy. The helper is compiled with `/usr/bin/clang -O2` on first use and cached as `<home>/bin/hclone-<hash of the source>`, so every checkout of the same source shares one binary and an edit rebuilds it. It runs once right after compiling, so macOS's first-launch check of a new binary (100+ ms) never lands inside a timed fork; `forkbomb bench` also makes one untimed fork with each forker before measuring.
 - **`copy`.** `/bin/cp -R`, one destination at a time. It is the fallback and the honest baseline in `forkbomb bench`.
 
 `pickForker()` uses clonefile only when `canClone()` holds: macOS, source and destination on the same device, and `statfs` reporting APFS (`f_type` `0x1a`). If the helper can't be compiled it falls back to `copy`. pid 1 is chosen separately from the forks, so a repo on another volume is copied once into the run directory and every fork after that is still a clone.
@@ -122,7 +124,7 @@ Everything that copies a tree goes through one interface, `Forker.fork(src, dsts
 Every shell command a fork runs, and every test run and git call the judge makes, goes through `runSandboxed()` in `src/sandbox.ts`:
 
 ```
-/usr/bin/sandbox-exec -p <profile> /bin/bash -c <command>
+/usr/bin/sandbox-exec -p <profile> /bin/bash -c 'ulimit -f <1 GiB>; ulimit -u <limit>; exec /bin/bash -c "$0"' <command>
 ```
 
 The profile is generated per fork by `seatbeltProfile()`:
@@ -130,13 +132,14 @@ The profile is generated per fork by `seatbeltProfile()`:
 | Area | Rule |
 |---|---|
 | Writes | Denied everywhere except the fork's clone, its private temp dir, and `/dev/null`, `/dev/zero`, `/dev/dtracehelper`, `/dev/tty*`, `/dev/fd/*`. `<clone>/.git` is denied for forks; only the judge's own git calls may write it. |
-| Reads | File contents and extended attributes under the home folder are denied, except the clone, the temp dir and common toolchain folders (`.nvm`, `.volta`, `.bun`, `.cargo`, `.rustup`, `.pyenv`, `.gradle`, `.m2`, `go`, `Library/Python` and others in `HOME_TOOLCHAINS`). Metadata stays visible, and each parent folder of the clone is listable, so path lookups and `getcwd()` work. Reads outside the home folder are allowed. |
-| Network | Without `--network`: all network denied except loopback in both directions, and the mDNSResponder and DNS-SD services are blocked, so names don't resolve. |
+| Reads | File contents and extended attributes under the home folder and under the runs folder (`SandboxSpec.denyRead`) are denied, except the clone, the temp dir and common toolchain folders (`.nvm`, `.volta`, `.bun`, `.cargo`, `.rustup`, `.pyenv`, `.gradle`, `.m2`, `go`, `Library/Python` and others in `HOME_TOOLCHAINS`). So sibling forks, pid 1 and other runs stay unreadable even when `FORKBOMB_HOME` or `--runs-dir` puts runs outside the home folder. Metadata stays visible, and each parent folder of the clone is listable, so path lookups and `getcwd()` work. Other reads outside the home folder are allowed. |
+| Network | Without `--network`: `(deny network*)`, then binding and inbound connections allowed on local loopback addresses and outbound connections allowed only to loopback (`network-bind`/`network-inbound` and `network-outbound` as separate rules: one `network*` rule with a `local` filter would match every outbound socket). TCP and UDP to any other address fail with `EPERM`, by IP as well as by name, and the mDNSResponder and DNS-SD services are blocked, so names don't resolve. `forkbomb doctor` checks both halves. |
+| Limits | `ulimit -f` caps any one file at 1 GiB, and `ulimit -u` caps the user's process count at what it was plus 1,024 (macOS counts processes per user), so a runaway write or a fork bomb stops there. Claude Code sessions are started under the same limits. |
 | Environment | `cleanEnv()` keeps only `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL` and `SHELL`. It sets `TMPDIR` to the fork's temp dir, `CI=1`, `TERM=dumb`, no color, global and system git config off, no git prompts, and points npm, pip and XDG caches and config into the temp dir. A repo's `.npmrc` can't swap the shell npm runs scripts with. No API key or token reaches a fork. |
 | Processes | Each command is a detached process group, registered in `src/procs.ts`. On timeout or abort the whole group gets `SIGKILL`; when the shell exits, anything it left running in the group is killed too. Pipes get 1.5 s to drain, so a background process holding them open can't hang the fork. |
 | Output | Fork commands and test runs keep at most 12,000 characters of output: the head and the tail, where errors usually are. |
 
-`--no-sandbox` runs `/bin/bash -c` directly, prints a warning, and is required off macOS. Seatbelt is a macOS mechanism, not a VM: forks can read most of the filesystem outside the home folder and use CPU and memory freely. The threat model is at forkbomb.fun/security.
+`--no-sandbox` runs `/bin/bash -c` directly (with the same limits), prints a warning, and is required off macOS. Seatbelt is a macOS mechanism, not a VM: forks can read most of the filesystem outside the home folder and the runs folder, and use CPU and memory freely. Total disk use is watched by the orchestrator (see Halting), not capped per fork. The threat model is at forkbomb.fun/security.
 
 ## The tools
 
@@ -164,7 +167,7 @@ The orchestrator hands every engine the same system prompt (`systemPrompt()` in 
 ```
 claude -p --output-format stream-json --verbose --safe-mode --no-session-persistence
   --setting-sources "" --permission-mode acceptEdits --tools Bash,Read,Edit,Write,Glob,Grep
-  --settings <json> --append-system-prompt <system prompt> --effort <effort> [--model <id>]
+  --settings <json> --append-system-prompt <system prompt> --effort <effort> --max-turns <n> [--model <id>]
 ```
 
 - **No settings from disk.** `--setting-sources ""` loads no user, project or local settings, so a repo's own `.claude/settings.json` can't loosen the rules. The session also runs with `--safe-mode` and `--no-session-persistence`.
@@ -174,7 +177,7 @@ claude -p --output-format stream-json --verbose --safe-mode --no-session-persist
 - **Kill.** `SIGTERM` to the process group, `SIGKILL` 2 s later.
 - `--network` is not supported with this engine.
 
-**The canary.** Before the first run on each Claude Code version (`claude --version`), `runCanary()` in `src/engines/canary.ts` starts a real headless session with the exact settings every fork gets, plus one extra denied folder holding a planted secret, and tells it to escape step by step. The result is read from the filesystem and the raw stream, never from what the model says it did. Six checks must all pass: writes inside the clone work; the shell can't write outside the clone; the file tools can't write outside the clone; outbound network is blocked; the planted secret never appears in the session; `.git` stays read-only. The result is written to `<home>/canary.json`, and a pass for the installed version skips the canary on later runs. `forkbomb canary` runs it on demand.
+**The canary.** Before the first run on each Claude Code version (`claude --version`), `runCanary()` in `src/engines/canary.ts` starts a real headless session with the exact settings every fork gets, plus one extra denied folder holding a planted secret, and tells it to escape step by step. The result is read from the filesystem and the raw stream, never from what the model says it did. First, every escape step (2 to 7) must show up in the stream as a tool call that got a result back: a session that declines or skips a step proves nothing, so the canary is then inconclusive, fails, and caches nothing. Then six checks must all pass: writes inside the clone work; the shell can't write outside the clone; the file tools can't write outside the clone; outbound network is blocked; the planted secret never appears in the session; `.git` stays read-only. The result is written to `<home>/canary.json`, and a pass for the installed version skips the canary on later runs. `forkbomb canary` runs it on demand.
 
 ### `api`
 
@@ -190,17 +193,17 @@ claude -p --output-format stream-json --verbose --safe-mode --no-session-persist
 - **The server picks the model.** Requests send `model: "hosted"` with the two tools and `tool_choice: "auto"`. Clients only ever see the model as `forkbomb-hosted`.
 - **Streaming, so a kill is cheap.** Requests stream (`stream: true` with `include_usage`), and `src/engines/hosted-stream.ts` assembles the events back into one completion. A killed fork hangs up mid-answer; the gateway sees the connection close, stops the GPU and bills only what was streamed.
 - **Retries.** 429, 500, 502, 504, a network error and a transient 503 (one marked `upstream_busy` or carrying `Retry-After`) are retried up to 4 times with jittered exponential backoff, honoring `Retry-After`. A 503 for an unprovisioned pool fails fast. A stream that fails partway is never sent again, with one exception: an error event that the gateway settled at zero before the model produced anything (a job still queued when the budget ran out, a pool busy or warming up) is retried like the HTTP 503 or 504 it stands for. The gateway sends its headers after a few seconds without output to hold the connection through a cold start, so those failures arrive in-stream. Any other error event mid-stream reads like the HTTP error it stands for. An answer counts as whole only once a choice carries a `finish_reason`; `[DONE]` alone is not enough, because the gateway ends every stream with one. Each request has a 10-minute ceiling.
-- **Cost.** Each turn's charge is read from the settlement comment the gateway sends before `[DONE]` (or the `x-request-cost-usd` header on a JSON answer). A turn that fails mid-stream is still billed for what it generated, and the client reads that settlement before giving up. A killed fork's last, partial turn is billed by the gateway but missing from the run's total, because the fork hung up before the settlement.
+- **Cost.** Each turn's charge is read from the settlement comment the gateway sends before `[DONE]` (or the `x-request-cost-usd` header on a JSON answer). A turn that fails mid-stream is still billed for what it generated, and the client reads that settlement before giving up. A turn the client hangs up on (a killed or timed-out fork, a lost connection) is billed too, but settled after the client is gone, so `hungUpCostUsd()` works it out the way the gateway does: the usage chunk if it arrived, otherwise the gateway's input estimate over the request body plus the output that had streamed (bytes / 3, at least a token per delta), at the prices `/me` reported, rounded up to a micro-USD. That part is `fork_done.costEstimatedUsd`. The run reads the balance before the first round and, if anything was estimated, again once the gateway has settled (`chargedSince()`, polling for up to 6 s while hung-up turns still hold their reservations); a drop that fits becomes the exact `run_end.costUsd`, otherwise the estimate stands with `run_end.costApprox`.
 - **Shared credit gate.** The first fork to get a 402 records it on the run's `CreditGate`; no fork makes another call and no new round starts.
 
-`runHostedFork()` mirrors the `api` loop over Chat Completions: tool calls without an id get one, `content_filter` ends the fork as a refusal, and `length` is handled like `max_tokens`. The GPU pool is live; credit opens when $FORKBOMB launches. The first hosted race, on 2026-10-07 (run `20261007-015122`), ran 4 forks, passed 14/14 and spent $0.06 of operator-granted test credit.
+`runHostedFork()` mirrors the `api` loop over Chat Completions: tool calls without an id get one, `content_filter` ends the fork as a refusal, and `length` is handled like `max_tokens`. The GPU pool is live; credit opens when $FORKBOMB launches. The first hosted race, on 2026-10-07 (run `20261007-015122`), ran 4 forks, passed 14/14 and was billed $0.09 of operator-granted test credit.
 
 ## The judge
 
 `judge()` in `src/judge.ts` scores a fork by the patch it would ship, never by the state of its workspace. The fork's clone is untrusted, so every git call against it runs inside the sandbox with network off and `core.fsmonitor=false`, `core.hooksPath=/dev/null`, pager and color off. A fork can't plant a hook or fsmonitor config that runs while it is judged.
 
 1. **Changed files.** `git diff --name-only <base>` plus untracked files that aren't ignored. Edits to ignored paths (`node_modules`, build output) never enter the patch.
-2. **Protected files.** Changed files matching the protect globs are recorded as `tampered` and excluded from the patch. The defaults (`DEFAULT_PROTECT`) cover test and spec files, `test/`, `tests/` and `__tests__/` folders, Python and Go test files, `conftest.py`, package manifests and lockfiles, vitest, vite, jest, mocha and pytest config, `pyproject.toml`, `setup.cfg`, `tox.ini`, `Cargo.toml`, `go.mod` and `Makefile`. `--protect GLOB` adds more; `--no-default-protect` drops the defaults.
+2. **Protected files.** Changed files matching the protect globs are recorded as `tampered` and excluded from the patch. The defaults (`DEFAULT_PROTECT`) cover test and spec files, `test/`, `tests/` and `__tests__/` folders, Python and Go test files, `conftest.py`, package manifests and lockfiles, vitest, vite, jest, mocha, karma, playwright, cypress and pytest config, setup files by their usual names (`vitest.setup.*`, `jest.setup.*`, `setupTests.*`), compiler and transpiler config (`tsconfig*.json`, `jsconfig*.json`, Babel, SWC), `.npmrc`, `pyproject.toml`, `setup.cfg`, `tox.ini`, `noxfile.py`, `sitecustomize.py`, `Cargo.toml`, `go.mod`, `Makefile` and their JVM, Ruby and PHP counterparts. On top of the globs, `testInfraFiles()` finds the files a given test command runs or loads that no glob names: a script in the command itself (`node runner.mjs`, `--import ./setup.mjs`), the same in the package.json scripts it runs (`test`, `pretest`, `posttest` and any script they chain), and setup files named in the runner's config (`setupFiles`, `globalSetup`, mocha `require`, and so on). The run logs which files that added. `--protect GLOB` adds more; `--no-default-protect` drops all of it. Code under test still runs inside the test process, so a patch to a source file can still tamper with the test run itself (for example by patching the assertion library); read the winning patch.
 3. **Patch.** `git add -A`, then a binary `git diff --cached` against the base with the protected paths excluded. `--numstat` gives the diff size and file count.
 4. **Fresh clone.** pid 1 is forked into `state/<id>` and the patch is applied there with `git apply`. A patch that doesn't apply scores 0.
 5. **Test run.** The state is forked once more into a throwaway dir, the test command runs there, sandboxed (`--test-timeout`, default 300 s), and the throwaway dir is deleted. The state stays clean and can seed the next round.
@@ -221,20 +224,20 @@ Every state change in a run is a `RunEvent` (the union in `src/events.ts`), emit
 | `fork_start` | A fork gets its strategy | `fork`, `round`, `parent`, `strategy`, `brief` |
 | `tool` | A tool call returns | `fork`, `tool` (`bash`, `edit`), `summary`, `ok`, `ms` |
 | `note` | The model writes text or a progress note | `fork`, `text` (up to 280 characters) |
-| `fork_done` | The engine returns | `fork`, `reason`, `turns`, `inputTokens`, `outputTokens`, `costUsd`, `summary`, optional `error` |
+| `fork_done` | The engine returns | `fork`, `reason`, `turns`, `inputTokens`, `outputTokens`, `costUsd`, `summary`, optional `costEstimatedUsd`, `error`, `fatal` |
 | `judging` | The judge starts on a fork | `fork` |
 | `judge` | The judge returns a verdict | `fork`, `passed`, `failed`, `exitCode`, `score`, `diffLines`, `filesChanged`, `tampered`, `outputTail` |
-| `kill` | A race winner aborts a fork | `fork`, `why` |
+| `kill` | A race winner, an interrupt, a rejected key or a nearly full disk aborts a fork | `fork`, `why` |
 | `round_end` | Every fork in the round has settled | `round`, `best`, `bestScore` |
 | `winner` | A fork scored 1 | `fork`, `round`, `score`, `diffLines`, `filesChanged`, `patch`, `summary` |
-| `run_end` | Last event of the run | `ok`, `ms`, `costUsd`, `applied`, `patchPath`, `best`, `bestScore` |
+| `run_end` | Last event of the run | `ok`, `ms`, `costUsd`, `applied`, `patchPath`, `best`, `bestScore`, optional `costApprox`, `interrupted` |
 | `log` | Warnings and errors worth showing | `level` (`info`, `warn`, `error`), `msg` |
 
 `parseEventLog()` reads a log back for `replay` and `export`. It rejects the first line that isn't JSON, has an unknown `type`, or lacks a field the viewer needs, so a log the viewer can't play is refused instead of exported.
 
 pid 1 appears as `body` in `parent` fields. `costUsd` on `run_end` is null when any fork's cost is unknown, which is always the case on the `claude-code` engine. The `winner` event carries the full patch, so a recorded run replays without any other file.
 
-**Consumers.** `src/server.ts` serves `ui/` on `127.0.0.1` (port 4317, moving to the next free port if it is taken). In live mode `/events` streams the bus over server-sent events, history first, with a ping every 15 s. In replay mode the page gets the recorded events and plays them back. `ui/app.js` is one code path for both. `forkbomb export` writes a static, self-contained replay (`index.html`, `app.js`, `style.css`, `data.js`, `events.jsonl`) you can host anywhere; forkbomb.fun/replay is one.
+**Consumers.** `src/server.ts` serves `ui/` on `127.0.0.1` (port 4317, moving to the next free port if it is taken). In live mode `/events` streams the bus over server-sent events, history first, with a ping every 15 s. In replay mode the page fetches the recorded events from `/events.json` and plays them back, with a REPLAY badge where a live run shows LIVE. Neither is readable from another site: the server answers only requests whose `Host` is `127.0.0.1:<port>` or `localhost:<port>` (which stops DNS rebinding), refuses data requests a browser marks `Sec-Fetch-Site: cross-site`, and never serves events as a script that sets a global (which any page could include with a `<script>` tag). `ui/app.js` is one code path for all of it. `forkbomb export` writes a static, self-contained replay (`index.html`, `app.js`, `style.css`, `data.js`, `events.jsonl`) you can host anywhere, with this machine's paths replaced first (`scrubPaths()`: the run folder becomes `<run>`, the repo `./<name>`, the home folder and any `/Users/<name>` `~`); forkbomb.fun/replay is one.
 
 ## Process and trust boundaries
 
@@ -243,7 +246,7 @@ flowchart TB
     subgraph mac["Your Mac"]
         cli["forkbomb CLI process<br/>orchestrator, engines, judge, editor path checks<br/>reads keys from env or ~/.forkbomb/.env"]
         subgraph seatbelt["Seatbelt profile, one per command"]
-            sh["bash -c command<br/>writes: clone and temp dir only<br/>reads: nothing under home except clone, temp, toolchains<br/>network: loopback only<br/>env: allowlist, no keys"]
+            sh["bash -c command<br/>writes: clone and temp dir only<br/>reads: nothing under home or the runs folder except clone, temp, toolchains<br/>network: loopback only<br/>env: allowlist, no keys<br/>limits: 1 GiB per file, process count"]
         end
         subgraph claude["Claude Code session, one per fork"]
             cc["claude -p --safe-mode<br/>no settings from disk<br/>its own Bash sandbox and deny rules<br/>env: allowlist, no keys"]
