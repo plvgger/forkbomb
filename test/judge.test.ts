@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApfsForker } from "../src/fork/forker.js";
-import { DEFAULT_PROTECT, brokenTestCommand, judge, parseCounts, score, testInfraFiles } from "../src/judge.js";
+import { DEFAULT_PROTECT, brokenTestCommand, judge, missingScript, parseCounts, score, testInfraFiles } from "../src/judge.js";
 import { globToRegExp } from "../src/util.js";
 import { tempDir, writeTree } from "./helpers.js";
 
@@ -204,5 +204,28 @@ describe("judge", () => {
     writeFileSync(join(ctx.fork, "sum.js"), 'process.exit(0);\nimport { helper } from "dep";\nexport const sum = (a, b) => helper(a + b);\n');
     const v = await run(ctx);
     expect(v.score).toBeLessThan(1);
+  });
+});
+
+describe("missingScript", () => {
+  it("names a package.json script the test command needs but the repo doesn't have", async () => {
+    const repo = tempDir("repo");
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { test: "node --test", "test:unit": "vitest run" } }));
+    expect(await missingScript(repo, "npm run tset")).toMatch(/"tset" isn't in package\.json's scripts\)\. Check --test\./);
+    expect(await missingScript(repo, "pnpm run lint")).toMatch(/"lint"/);
+    expect(await missingScript(repo, "yarn run e2e -- --ci")).toMatch(/"e2e"/);
+    for (const ok of ["npm test", "npm run test", "npm run test:unit -- --silent", "pnpm test", "yarn test", "npm t", "node --test", "npx vitest run", "npm run --silent nope", "cd sub && npm run nope"]) {
+      expect(await missingScript(repo, ok), ok).toBeNull();
+    }
+  });
+
+  it("says nothing when package.json is missing or unreadable, and catches npm test without a test script", async () => {
+    const repo = tempDir("repo");
+    expect(await missingScript(repo, "npm run tset")).toBeNull();
+    writeFileSync(join(repo, "package.json"), "{ not json");
+    expect(await missingScript(repo, "npm run tset")).toBeNull();
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { build: "tsc" } }));
+    expect(await missingScript(repo, "npm test")).toMatch(/"test"/);
+    expect(await missingScript(repo, "npm run constructor")).toMatch(/"constructor"/);
   });
 });

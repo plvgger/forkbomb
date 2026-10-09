@@ -7,7 +7,7 @@ import { claudeSettings, keyFiles, runClaudeCodeFork } from "./engines/claude-co
 import { type CreditGate, type HostedChat, chargedSince, runHostedFork } from "./engines/hosted.js";
 import type { EventBus } from "./events.js";
 import { type Forker, pickForker } from "./fork/forker.js";
-import { DEFAULT_PROTECT, brokenTestCommand, judge, literalRegExp, parseCounts, score, testInfraFiles } from "./judge.js";
+import { DEFAULT_PROTECT, brokenTestCommand, judge, literalRegExp, missingScript, parseCounts, score, testInfraFiles } from "./judge.js";
 import { type SandboxSpec, runSandboxed } from "./sandbox.js";
 import { strategyFor } from "./strategies.js";
 import { Workspace } from "./tools.js";
@@ -227,6 +227,13 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     disabled: !o.sandbox,
     denyRead: [runsDir],
   });
+
+  // A test command naming a script package.json doesn't have can never pass: stop before spending the baseline.
+  const noScript = await missingScript(body, o.testCmd);
+  if (noScript) {
+    bus.emit({ type: "log", level: "error", msg: `No forks started: ${noScript}` });
+    return endEarly(false, 0, noScript);
+  }
 
   // Baseline: how the suite does before any fork touches it.
   const base = await runSandboxed(o.testCmd, specFor(body, "body"), { timeoutMs: o.testTimeoutMs, maxOutput: o.maxOutput, signal: o.signal });

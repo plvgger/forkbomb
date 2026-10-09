@@ -171,7 +171,7 @@ describe("runRace", () => {
       const { bus, events } = collect();
       const res = await runRace(options(repo, new FakeModel({}), { model, testCmd }), bus);
       expect(res.ok, testCmd).toBe(false);
-      expect(res.error, testCmd).toMatch(/Check --test/);
+      expect(res.error, `${testCmd}: ${JSON.stringify(events.filter((e) => e.type === "log" || e.type === "baseline"))}`).toMatch(/Check --test/);
       expect(calls, testCmd).toBe(0);
       expect(events.some((e) => e.type === "fork" || e.type === "fork_start"), testCmd).toBe(false);
       expect(events.some((e) => e.type === "log" && e.level === "error" && e.msg.startsWith("No forks started")), testCmd).toBe(true);

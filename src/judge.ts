@@ -179,6 +179,30 @@ export function brokenTestCommand(run: RunOutcome, counts: Counts, testTimeoutMs
   return null;
 }
 
+/**
+ * Why `npm run <name>` / `npm test` (pnpm, yarn alike) can't run: the script isn't in the repo's package.json.
+ * Read from package.json before the baseline, so it doesn't depend on how a package manager words or times its
+ * error. null when the command isn't of that form, has extra flags before the script, or package.json is unreadable.
+ */
+export async function missingScript(repoDir: string, testCmd: string): Promise<string | null> {
+  const m =
+    /^\s*(?:npm|pnpm|bun)\s+run(?:-script)?\s+([^\s;&|<>]+)/.exec(testCmd) ??
+    /^\s*yarn\s+run\s+([^\s;&|<>]+)/.exec(testCmd) ??
+    /^\s*(?:npm|pnpm|yarn)\s+(test)(?=\s|$)/.exec(testCmd) ??
+    /^\s*npm\s+(?:t|tst)(?=\s|$)/.exec(testCmd);
+  if (!m) return null;
+  const name = m[1] ?? "test";
+  if (name.startsWith("-")) return null;
+  let scripts: unknown;
+  try {
+    scripts = (JSON.parse(await readFile(join(repoDir, "package.json"), "utf8")) as { scripts?: unknown }).scripts;
+  } catch {
+    return null;
+  }
+  if (scripts && typeof scripts === "object" && Object.hasOwn(scripts, name)) return null;
+  return `the test command names a script that doesn't exist ("${name}" isn't in package.json's scripts). Check --test.`;
+}
+
 /** Git flags that keep repo-local config from running anything. */
 const GIT = "git -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -c color.ui=false";
 
