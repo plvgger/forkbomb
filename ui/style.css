@@ -36,6 +36,7 @@ code, pre, .mono { font-family: var(--mono); }
 .pill { font: 600 11px/1 var(--mono); letter-spacing: 0.12em; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); }
 .pill.live { color: var(--alive); border-color: rgba(60,242,180,.35); background: var(--alive-dim); }
 .pill.live::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--alive); margin-right: 8px; vertical-align: 1px; animation: pulse 1.2s ease-in-out infinite; }
+.pill.replay { color: var(--text); border-color: var(--line-2); }
 .pill.won { color: #06110d; background: var(--alive); border-color: var(--alive); }
 .pill.lost { color: var(--dead); border-color: rgba(255,90,95,.4); background: var(--dead-dim); }
 .meta { display: flex; gap: 18px; font: 12px/1 var(--mono); color: var(--muted); }

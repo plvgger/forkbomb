@@ -17,7 +17,7 @@
 
   let S;
   function reset() {
-    S = { nodes: new Map(), cols: [[]], t: 0, lastWall: performance.now(), running: false, cost: 0, events: 0, winner: null };
+    S = { nodes: new Map(), cols: [[]], t: 0, lastWall: performance.now(), running: false, cost: 0, costApprox: false, events: 0, winner: null };
     for (const el of [...tree.querySelectorAll(".card")]) el.remove();
     wires.innerHTML = "";
     $("log").innerHTML = "";
@@ -191,7 +191,8 @@
     switch (e.type) {
       case "run_start": {
         S.running = true;
-        setStatus("LIVE", "live");
+        // A recorded run plays back here too: only a run happening now is LIVE.
+        setStatus(replay ? "REPLAY" : "LIVE", replay ? "replay" : "live");
         $("task").textContent = e.task;
         $("testCmd").textContent = e.testCmd;
         $("model").textContent = `${e.model} · ${e.effort} · ${e.mode}`;
@@ -259,7 +260,9 @@
         if (!n) break;
         if (e.costUsd != null && !S.subscription) {
           S.cost += e.costUsd;
-          $("cost").textContent = `$${S.cost.toFixed(2)}`;
+          S.costApprox = S.costApprox || !!e.costEstimatedUsd;
+          $("cost").textContent = `${S.costApprox ? "~" : ""}$${S.cost.toFixed(2)}`;
+          if (S.costApprox) $("cost").title = "Includes turns killed mid-answer, estimated the way the gateway bills them.";
         }
         q(n, ".turns").textContent = `${e.turns} turns`;
         if (e.reason === "killed") break;
@@ -316,9 +319,13 @@
       case "run_end":
         S.running = false;
         $("elapsed").textContent = fmtT(e.ms);
-        if (e.costUsd != null && !S.subscription) $("cost").textContent = `$${e.costUsd.toFixed(2)}`;
-        setStatus(e.ok ? "EXIT 0" : "NO FORK PASSED", e.ok ? "won" : "lost");
-        log(e.t, "", `done in ${fmtT(e.ms)}${e.costUsd != null ? ` · $${e.costUsd.toFixed(2)}` : ""}${e.applied ? " · patch applied" : ""}`, e.ok ? "good" : "bad");
+        if (e.costUsd != null && !S.subscription) {
+          $("cost").textContent = `${e.costApprox ? "~" : ""}$${e.costUsd.toFixed(2)}`;
+          if (e.costApprox) $("cost").title = "Includes turns killed mid-answer, estimated the way the gateway bills them.";
+          else $("cost").removeAttribute("title");
+        }
+        setStatus(e.ok ? "EXIT 0" : e.interrupted ? "INTERRUPTED" : "NO FORK PASSED", e.ok ? "won" : "lost");
+        log(e.t, "", `${e.interrupted ? "interrupted after" : "done in"} ${fmtT(e.ms)}${e.costUsd != null ? ` · ${e.costApprox ? "~" : ""}$${e.costUsd.toFixed(2)}` : ""}${e.applied ? " · patch applied" : ""}`, e.ok ? "good" : "bad");
         break;
       case "log":
         log(e.t, "", e.msg, e.level === "error" ? "bad" : e.level === "warn" ? "warn" : "");
@@ -340,8 +347,8 @@
   reset();
   requestAnimationFrame(tickClock);
 
-  if (Array.isArray(window.FORKBOMB_EVENTS)) {
-    const events = window.FORKBOMB_EVENTS;
+  // A recorded run comes inline (an export: data.js holds the events) or from the local replay server as JSON.
+  function startReplay(events) {
     replay = { i: 0, timer: null, playing: true };
     $("replayBar").hidden = false;
     const speed = () => Number($("speed").value) || 4;
@@ -370,6 +377,15 @@
       setTimeout(step, 300);
     };
     setTimeout(step, 400);
+  }
+
+  if (Array.isArray(window.FORKBOMB_EVENTS)) {
+    startReplay(window.FORKBOMB_EVENTS);
+  } else if (window.FORKBOMB_EVENTS_URL) {
+    fetch(window.FORKBOMB_EVENTS_URL, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(startReplay)
+      .catch((err) => log(0, "", `couldn't load the run: ${err.message}`, "bad"));
   } else {
     const es = new EventSource("events");
     es.onmessage = (m) => apply(JSON.parse(m.data));

@@ -3,7 +3,7 @@ import { BRAND, DEFAULT_HOSTED_URL, HOSTED_KEY_ENV, HOSTED_URL_ENV } from "../br
 import type { EventBus } from "../events.js";
 import type { ToolOutcome, Workspace } from "../tools.js";
 import type { Semaphore } from "../util.js";
-import { ChatAssembler, HEADER_COST, HEADER_REMAINING, SseParser, errorFields } from "./hosted-stream.js";
+import { ChatAssembler, HEADER_COST, HEADER_REMAINING, SseParser, errorFields, utf8Bytes } from "./hosted-stream.js";
 
 /**
  * Fork engine that runs on hosted compute: an OpenAI-compatible Chat
@@ -48,10 +48,15 @@ export interface ChatTurn {
   remainingUsd: number | null;
 }
 
+export interface HostedPricing {
+  inputPerMTokUsd: number;
+  outputPerMTokUsd: number;
+}
+
 export interface HostedMe {
   workspace: { id: string; label: string | null; createdAt: string };
   credits: { balanceMicroUsd: number; balanceUsd: number };
-  pricing: { inputPerMTokUsd: number; outputPerMTokUsd: number; model: string };
+  pricing: HostedPricing & { model: string };
 }
 
 /** The seam between a hosted fork and the gateway. Tests point a real client at a local mock. */
@@ -63,6 +68,8 @@ export interface HostedChat {
   chat(req: ChatRequest, signal: AbortSignal): Promise<ChatTurn>;
   /** Scrub the key from a string before it reaches an event or a log line. */
   redact?(s: string): string;
+  /** Spendable balance in micro-USD (GET /me), so a run can report what it was really charged. */
+  balance?(signal: AbortSignal): Promise<number>;
 }
 
 /** Two function tools that map one-to-one onto Workspace.bash and Workspace.edit. */
@@ -112,6 +119,8 @@ export type HostedErrorKind = "credits" | "auth" | "rate" | "unavailable" | "net
 export class HostedError extends Error {
   /** What the gateway still charged for the failed call: a stream that fails midway is billed for what it generated. */
   costUsd: number | null = null;
+  /** costUsd is this client's estimate of the gateway's bill (a stream it hung up on), not a settled figure. */
+  costEstimated = false;
 
   constructor(
     readonly kind: HostedErrorKind,
@@ -168,6 +177,8 @@ export interface HostedClientOptions {
   requestTimeoutMs?: number;
   /** After a mid-stream error, how long to wait for the gateway's settlement of the failed call. Default 2000 ms. */
   errorGraceMs?: number;
+  /** Per-token prices, if already known; me() fills them in. Needed to price a turn this client hangs up on. */
+  pricing?: HostedPricing;
 }
 
 const RETRYABLE = new Set([429, 500, 502, 504]);
@@ -190,6 +201,8 @@ export class HostedClient implements HostedChat {
   private readonly retryBaseMs: number;
   private readonly requestTimeoutMs: number;
   private readonly errorGraceMs: number;
+  /** From the last /me (or the constructor). Without it, a turn this client hangs up on is priced as unknown. */
+  pricing: HostedPricing | null;
 
   constructor(o: HostedClientOptions) {
     const u = checkBaseUrl(o.baseUrl);
@@ -202,6 +215,7 @@ export class HostedClient implements HostedChat {
     this.retryBaseMs = o.retryBaseMs ?? 1000;
     this.requestTimeoutMs = o.requestTimeoutMs ?? 600_000;
     this.errorGraceMs = o.errorGraceMs ?? 2000;
+    this.pricing = o.pricing ?? null;
   }
 
   /**
@@ -224,7 +238,7 @@ export class HostedClient implements HostedChat {
       "/chat/completions",
       body,
       signal,
-      (res, live) => (isEventStream(res) ? this.readStream(res, live, signal) : readCompletion(res)),
+      (res, live) => (isEventStream(res) ? this.readStream(res, live, signal, body) : readCompletion(res)),
       "text/event-stream",
     );
   }
@@ -234,7 +248,13 @@ export class HostedClient implements HostedChat {
     if (!me?.workspace?.id || typeof me.credits?.balanceMicroUsd !== "number") {
       throw new HostedError("bad_response", 200, "the hosted gateway returned an unexpected /me response");
     }
+    const { inputPerMTokUsd: i, outputPerMTokUsd: o } = me.pricing ?? {};
+    if (typeof i === "number" && typeof o === "number" && i >= 0 && o >= 0) this.pricing = { inputPerMTokUsd: i, outputPerMTokUsd: o };
     return me;
+  }
+
+  async balance(signal: AbortSignal): Promise<number> {
+    return (await this.me(signal)).credits.balanceMicroUsd;
   }
 
   /** Strip the key out of anything that might end up in an event, a log line or an error. */
@@ -312,7 +332,7 @@ export class HostedClient implements HostedChat {
    * Reads the gateway's server-sent events into one turn. An abort cancels the pending read at once rather
    * than at the next chunk, so a killed fork's connection closes immediately and the gateway sees it go.
    */
-  private async readStream(res: Response, live: AbortSignal, signal: AbortSignal): Promise<ChatTurn> {
+  private async readStream(res: Response, live: AbortSignal, signal: AbortSignal, body: HungUpBody): Promise<ChatTurn> {
     const reader = (res.body ?? new Response("").body!).getReader();
     const decoder = new TextDecoder();
     const sse = new SseParser();
@@ -324,10 +344,18 @@ export class HostedClient implements HostedChat {
       halt(live.reason);
       reader.cancel().catch(() => {});
     };
+    // Hanging up on a stream the gateway already answered doesn't make it free: the gateway bills what it had
+    // produced by then (and the prompt), settling after the client is gone, where no settlement comment can reach
+    // it. So the error carries this client's estimate of that bill, worked out the way the gateway works it out.
     const fail = (e: unknown): Error => {
-      if (signal.aborted) return stopped(signal);
-      if (live.aborted) return new HostedError("network", 0, `the hosted gateway didn't finish answering within ${Math.round(this.requestTimeoutMs / 1000)}s`);
-      return new HostedError("network", 0, this.redact(`the hosted gateway stream broke off (${why(e)})`));
+      const err = signal.aborted
+        ? stopped(signal)
+        : live.aborted
+          ? new HostedError("network", 0, `the hosted gateway didn't finish answering within ${Math.round(this.requestTimeoutMs / 1000)}s`)
+          : new HostedError("network", 0, this.redact(`the hosted gateway stream broke off (${why(e)})`));
+      const settled = chat.costUsd;
+      const estimate = settled === null && this.pricing ? hungUpCostUsd(body, chat, this.pricing) : null;
+      return Object.assign(err, { costUsd: settled ?? estimate, costEstimated: settled === null });
     };
     if (live.aborted) onAbort();
     else live.addEventListener("abort", onAbort, { once: true });
@@ -430,6 +458,62 @@ export class HostedClient implements HostedChat {
       default:
         return new HostedError("http", status, `hosted gateway error ${status}${err.code ? ` ${err.code}` : ""}: ${detail}`);
     }
+  }
+}
+
+/** The parts of a chat request the gateway's input estimate reads. */
+type HungUpBody = { messages: unknown[]; tools?: unknown; tool_choice?: unknown };
+
+/** The gateway's billing constants for a stream it settles itself (web/lib/server/gateway/request.ts). */
+const BYTES_PER_TOKEN = 3;
+const BASE_TOKENS = 16;
+const PER_MESSAGE_TOKENS = 8;
+
+/**
+ * What the gateway bills for a streamed turn the client hung up on: the usage chunk if it had arrived, otherwise
+ * its input estimate (everything the model reads, at BYTES_PER_TOKEN, plus fixed overheads) and the output that had
+ * streamed (bytes at BYTES_PER_TOKEN, at least a token per delta), at the per-token prices, rounded up to a
+ * micro-USD. Only what reached this client is counted, so a few deltas still in flight can be missed.
+ */
+export function hungUpCostUsd(body: HungUpBody, chat: ChatAssembler, pricing: HostedPricing): number {
+  const u = chat.usage;
+  const real = Number.isSafeInteger(u?.prompt_tokens) && Number.isSafeInteger(u?.completion_tokens);
+  const input = real
+    ? u!.prompt_tokens!
+    : BASE_TOKENS +
+      body.messages.length * PER_MESSAGE_TOKENS +
+      Math.ceil(utf8Bytes(JSON.stringify([body.messages, body.tools ?? null, body.tool_choice ?? null, null])) / BYTES_PER_TOKEN);
+  const output = real ? u!.completion_tokens! : Math.max(chat.generatedChunks, Math.ceil(chat.generatedBytes / BYTES_PER_TOKEN));
+  const micro = Math.ceil((input * Math.round(pricing.inputPerMTokUsd * 1e6) + output * Math.round(pricing.outputPerMTokUsd * 1e6)) / 1e6);
+  return micro / 1e6;
+}
+
+/**
+ * What a hosted run was really charged: how far the balance fell since `beforeMicro`, once the gateway has settled
+ * the turns the run hung up on. Until a hung-up turn settles, its whole reservation is held, so the drop overshoots
+ * for a moment; this polls until the drop comes within reach of the run's own figure (`local`, which includes the
+ * estimates). Null when the balance can't be read, or never fits (a top-up landed, or another client spent on the
+ * same key at the same time), in which case the local figure stands.
+ */
+export async function chargedSince(
+  client: HostedChat,
+  beforeMicro: number,
+  local: { usd: number; estimatedUsd: number },
+  opts: { waitMs?: number; everyMs?: number; signal?: AbortSignal } = {},
+): Promise<number | null> {
+  if (!client.balance) return null;
+  const settled = local.usd - local.estimatedUsd;
+  const lo = settled + local.estimatedUsd / 2;
+  const hi = local.usd + local.estimatedUsd / 2 + 0.0005;
+  const deadline = performance.now() + (opts.waitMs ?? 6000);
+  for (;;) {
+    await new Promise((r) => setTimeout(r, opts.everyMs ?? 750));
+    if (opts.signal?.aborted) return null; // interrupted: the estimate will do
+    const now = await client.balance(AbortSignal.timeout(8000)).catch(() => null);
+    if (now === null) return null;
+    const drop = (beforeMicro - now) / 1e6;
+    if (drop >= lo - 1e-9 && drop <= hi + 1e-9) return Math.round(drop * 1e6) / 1e6;
+    if (drop < lo || performance.now() > deadline) return null;
   }
 }
 
@@ -562,6 +646,7 @@ export async function runHostedFork(cfg: HostedForkConfig): Promise<ForkResult> 
   let inputTokens = 0;
   let outputTokens = 0;
   let cost: number | null = 0;
+  let estimated = 0;
   let summary = "";
   let callSeq = 0;
   const clean = (s: string) => cfg.client.redact?.(s) ?? s;
@@ -572,6 +657,7 @@ export async function runHostedFork(cfg: HostedForkConfig): Promise<ForkResult> 
     inputTokens,
     outputTokens,
     costUsd: cost,
+    ...(cost !== null && estimated > 0 ? { costEstimatedUsd: Math.round(estimated * 1e6) / 1e6 } : {}),
     summary,
     ...(error ? { error: clean(error) } : {}),
   });
@@ -655,10 +741,17 @@ export async function runHostedFork(cfg: HostedForkConfig): Promise<ForkResult> 
       }
     }
   } catch (e) {
+    // A turn that ended early can still have been charged: settled by the gateway, or estimated by the client
+    // when it hung up (killed, timed out, connection lost). An estimate it couldn't make means the cost is unknown.
+    const charge = e as { costUsd?: number | null; costEstimated?: boolean };
+    if (typeof charge.costUsd === "number") {
+      if (cost !== null) cost += charge.costUsd;
+      if (charge.costEstimated) estimated += charge.costUsd;
+    } else if (charge.costEstimated) cost = null;
     if (signal.aborted) return finish(cfg.abortReason());
     if (e instanceof HostedError) {
-      if (cost !== null && e.costUsd !== null) cost += e.costUsd;
       if (e.kind === "credits" && !credit.exhausted) credit.exhausted = clean(e.message);
+      if (e.kind === "auth") return { ...finish("error", e.message), fatal: clean(e.message) };
       return finish("error", e.message);
     }
     return finish("error", e instanceof Error ? e.message : String(e));

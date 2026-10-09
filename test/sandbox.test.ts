@@ -1,8 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type SandboxSpec, runSandboxed } from "../src/sandbox.js";
+import { MAX_FILE_KIB, PROCESS_HEADROOM, type SandboxSpec, runSandboxed } from "../src/sandbox.js";
 import { tempDir } from "./helpers.js";
 
 function spec(root: string, extra: Partial<SandboxSpec> = {}): SandboxSpec {
@@ -37,6 +39,25 @@ describe("sandbox", () => {
     expect(judge.code).toBe(0);
   });
 
+  it("refuses connections to any address that isn't this machine, over TCP and UDP, by IP as well as by name (regression)", async () => {
+    // 192.0.2.1 is a documentation address: unsandboxed, the UDP send goes out and the TCP connect just waits.
+    // The sandbox must refuse both at once (EPERM), so the check holds offline too.
+    const root = tempDir("sb");
+    const probe = `${JSON.stringify(process.execPath)} -e 'const net = require("net"), dgram = require("dgram");
+      const c = net.connect({ host: "192.0.2.1", port: 443, timeout: 3000 });
+      c.on("connect", () => { console.log("TCP_CONNECTED"); c.destroy(); });
+      c.on("timeout", () => { console.log("TCP_TIMEOUT"); c.destroy(); });
+      c.on("error", (e) => console.log("TCP_" + e.code));
+      const s = dgram.createSocket("udp4");
+      s.send("x", 53, "192.0.2.1", (e) => { console.log(e ? "UDP_" + e.code : "UDP_SENT"); s.close(); });'`;
+    const r = await run(probe, spec(root));
+    expect(r.output).toContain("TCP_EPERM");
+    expect(r.output).toContain("UDP_EPERM");
+    // --network lifts it.
+    const open = await run(probe, spec(root, { network: true }));
+    expect(open.output).not.toContain("UDP_EPERM");
+  });
+
   it("cuts outbound network but keeps loopback", async () => {
     const root = tempDir("sb");
     const server = createServer((_, res) => res.end("local-ok"));
@@ -69,10 +90,45 @@ describe("sandbox", () => {
     const sibling = tempDir("sb-sibling");
     writeFileSync(join(sibling, "secret.txt"), "sibling-data");
     writeFileSync(join(root, "mine.txt"), "own-data");
-    const r = await run(`cat mine.txt; cat ${JSON.stringify(join(sibling, "secret.txt"))} 2>&1; ls ~/Desktop >/dev/null 2>&1 && echo LISTED || echo NOLIST`, spec(root));
+    // The runs folder is denied by name, as the orchestrator does it, so this holds wherever the checkout lives.
+    const runs = join(root, "..");
+    const r = await run(`cat mine.txt; cat ${JSON.stringify(join(sibling, "secret.txt"))} 2>&1; ls ~/Desktop >/dev/null 2>&1 && echo LISTED || echo NOLIST`, spec(root, { denyRead: [runs] }));
     expect(r.output).toContain("own-data");
     expect(r.output).not.toContain("sibling-data");
     expect(r.output).toContain("NOLIST");
+  });
+
+  it("keeps sibling forks and other runs unreadable when the runs folder is outside home (regression)", async () => {
+    const runs = realpathSync(mkdtempSync(join(tmpdir(), "forkbomb-runs-")));
+    try {
+      expect(relative(realpathSync(homedir()), runs).startsWith("..")).toBe(true);
+      const root = join(runs, "run-a", "forks", "1.01");
+      mkdirSync(root, { recursive: true });
+      mkdirSync(join(runs, "run-a", "forks", "1.02"), { recursive: true });
+      mkdirSync(join(runs, "run-b"), { recursive: true });
+      writeFileSync(join(root, "mine.txt"), "own-data");
+      writeFileSync(join(runs, "run-a", "forks", "1.02", "secret.txt"), "sibling-data");
+      writeFileSync(join(runs, "run-b", "winner.patch"), "other-run-data");
+      const s = { root, tmp: join(runs, "run-a", "tmp", "1.01"), network: false, gitWrite: false, denyRead: [runs] };
+      const r = await run("cat mine.txt; pwd; cat ../1.02/secret.txt ../../../run-b/winner.patch 2>&1; echo END", s);
+      expect(r.output).toContain("own-data");
+      expect(r.output).toContain(root); // getcwd still works under a denied folder
+      expect(r.output).not.toContain("sibling-data");
+      expect(r.output).not.toContain("other-run-data");
+      expect(r.output).toContain("END");
+    } finally {
+      rmSync(runs, { recursive: true, force: true });
+    }
+  });
+
+  it("caps file size and process count for every command", async () => {
+    const root = tempDir("sb");
+    const mine = execFileSync("/bin/ps", ["-U", String(process.getuid!()), "-o", "pid="], { encoding: "utf8" }).trim().split("\n").length;
+    const r = await run("ulimit -f; ulimit -u", spec(root));
+    const [fsize, nproc] = r.output.trim().split(/\s+/).map(Number);
+    expect(fsize).toBe(MAX_FILE_KIB);
+    expect(nproc).toBeGreaterThan(mine);
+    expect(nproc).toBeLessThanOrEqual(mine + PROCESS_HEADROOM + 200);
   });
 
   it("blocks the system DNS resolver socket", async () => {

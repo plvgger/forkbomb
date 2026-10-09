@@ -14,6 +14,9 @@ export interface BenchRow {
 
 async function measure(forker: Forker, src: string, forks: number, scratch: string): Promise<BenchRow> {
   const dir = await mkdtemp(join(scratch, `${forker.name}-`));
+  // One untimed fork first, so neither forker is timed paying a one-off cost (a first exec, a cold file cache).
+  await forker.fork(src, [join(dir, "warmup")]);
+  await rm(join(dir, "warmup"), { recursive: true, force: true });
   const dsts = Array.from({ length: forks }, (_, i) => join(dir, `f${i}`));
   const workspace = await treeBytes(src);
   const free0 = await freeBytes(scratch);

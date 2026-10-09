@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, stat, statfs } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { PKG_ROOT, appHome, exec } from "../util.js";
 
@@ -53,18 +54,27 @@ export class CopyForker implements Forker {
   }
 }
 
-/** Compile the clonefile helper once per helper source version and cache it under <home>/bin. */
-async function ensureHelper(): Promise<string> {
+/**
+ * Compile the clonefile helper once per helper source and cache it under <home>/bin. The name comes from a
+ * hash of the source, so every checkout of the same source shares one binary (an mtime changes with each clone).
+ */
+export async function ensureHelper(): Promise<string> {
   const src = join(PKG_ROOT, "native", "hclone.c");
   const binDir = join(appHome(), "bin");
-  const srcMtime = Math.floor((await stat(src)).mtimeMs);
-  const bin = join(binDir, `hclone-${srcMtime}`);
+  const hash = createHash("sha256").update(await readFile(src)).digest("hex").slice(0, 12);
+  const bin = join(binDir, `hclone-${hash}`);
   if (existsSync(bin)) return bin;
   await mkdir(binDir, { recursive: true });
-  const r = await exec("/usr/bin/clang", ["-O2", "-o", bin, src]);
+  // Built under a temp name and renamed into place, so a concurrent run never executes half a binary.
+  const tmp = `${bin}.${process.pid}.tmp`;
+  const r = await exec("/usr/bin/clang", ["-O2", "-o", tmp, src]);
   if (r.code !== 0) {
+    await rm(tmp, { force: true });
     throw new Error(`could not compile the clone helper (is Xcode Command Line Tools installed?): ${r.stderr.trim()}`);
   }
+  // macOS checks a new binary the first time it runs, which takes 100+ ms. Pay that here, not inside a timed fork.
+  await exec(tmp, []).catch(() => null);
+  await rename(tmp, bin);
   return bin;
 }
 

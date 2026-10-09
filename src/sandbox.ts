@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
@@ -18,6 +18,12 @@ export interface SandboxSpec {
   disabled?: boolean;
   /** Extra folders under ~ a fork may read (e.g. a shared fixtures dir). */
   allowRead?: string[];
+  /**
+   * Folders outside ~ that are as private as ~: nothing in them is readable except the clone and the temp
+   * dir. The orchestrator passes the runs folder, so sibling forks, pid 1 and other runs stay unreadable
+   * when FORKBOMB_HOME or --runs-dir puts runs outside ~.
+   */
+  denyRead?: string[];
 }
 
 export interface RunOutcome {
@@ -67,8 +73,8 @@ function realOrSelf(p: string): string {
 /**
  * Seatbelt (sandbox-exec) profile for one fork:
  * - writes only inside the fork's clone and private temp dir (.git excluded for forks);
- * - nothing under the home folder is readable except the clone, the temp dir and
- *   toolchain folders (metadata stays visible so path lookups behave normally);
+ * - nothing under the home folder or a denyRead folder is readable except the clone, the
+ *   temp dir and toolchain folders (metadata stays visible so path lookups behave normally);
  * - no network except loopback, and no access to the system DNS resolver.
  */
 export function seatbeltProfile(spec: SandboxSpec): string {
@@ -86,18 +92,52 @@ export function seatbeltProfile(spec: SandboxSpec): string {
     '  (regex #"^/dev/tty") (regex #"^/dev/fd/"))',
   ];
   if (!spec.gitWrite) lines.push(`(deny file-write* (subpath ${sbString(join(root, ".git"))}))`);
-  lines.push(`(deny file-read-data file-read-xattr (subpath ${sbString(home)}))`);
+  const denied = [...new Set([home, ...(spec.denyRead ?? []).map(realOrSelf)])];
+  lines.push(`(deny file-read-data file-read-xattr ${denied.map((p) => `(subpath ${sbString(p)})`).join(" ")})`);
   // Same operations as the deny above: Seatbelt ranks specific operations over file-read*.
   lines.push(`(allow file-read-data file-read-xattr ${readable.map((p) => `(subpath ${sbString(p)})`).join(" ")})`);
   // getcwd() and path walks need to list each parent folder itself (not its other children).
-  const parents = [...new Set([root, tmp].flatMap((p) => ancestorsWithin(p, home)))];
+  const parents = [...new Set([root, tmp].flatMap((p) => denied.flatMap((d) => ancestorsWithin(p, d))))];
   if (parents.length) lines.push(`(allow file-read-data ${parents.map((p) => `(literal ${sbString(p)})`).join(" ")})`);
   if (!spec.network) {
     lines.push("(deny network*)");
-    lines.push('(allow network* (local ip "localhost:*") (remote ip "localhost:*"))');
+    // Split by operation. One `(allow network* (local ip "localhost:*") ...)` would match every outbound
+    // socket, since a socket that hasn't bound yet counts as local localhost, and so let any destination through.
+    lines.push('(allow network-bind network-inbound (local ip "localhost:*"))');
+    lines.push('(allow network-outbound (remote ip "localhost:*"))');
     lines.push('(deny mach-lookup (global-name "com.apple.mDNSResponder") (global-name "com.apple.dnssd.service"))');
   }
   return lines.join("\n");
+}
+
+/** Largest file a sandboxed command may write, in KiB (bash `ulimit -f`): a runaway write stops at 1 GiB, not at a full disk. */
+export const MAX_FILE_KIB = 1024 * 1024;
+/** Processes a sandboxed command may add to the user's count (`ulimit -u` is per user on macOS), so a fork bomb stops there. */
+export const PROCESS_HEADROOM = 1024;
+
+let procCap: { at: number; cap: number | null } | null = null;
+
+/**
+ * The per-user process limit to give sandboxed commands: the user's current process count plus
+ * PROCESS_HEADROOM. Recounted at most every 30 s; null when the count can't be read.
+ */
+export function processCap(now = Date.now()): number | null {
+  if (procCap && now - procCap.at < 30_000) return procCap.cap;
+  let cap: number | null = null;
+  try {
+    const out = execFileSync("/bin/ps", ["-U", String(process.getuid?.() ?? ""), "-o", "pid="], { encoding: "utf8", timeout: 5000 });
+    cap = out.split("\n").filter((l) => l.trim()).length + PROCESS_HEADROOM;
+  } catch {
+    cap = null;
+  }
+  procCap = { at: now, cap };
+  return cap;
+}
+
+/** Shell lines that set the file-size and process limits; a limit the system refuses is skipped quietly. */
+export function limitsPrelude(): string {
+  const cap = processCap();
+  return `ulimit -f ${MAX_FILE_KIB} 2>/dev/null; ${cap ? `ulimit -u ${cap} 2>/dev/null; ` : ""}`;
 }
 
 /** The only environment a fork's shell inherits. No API keys, no tokens. */
@@ -127,7 +167,10 @@ export function cleanEnv(tmp: string): NodeJS.ProcessEnv {
   return env;
 }
 
-/** Run a shell command inside the sandbox, with a hard timeout and an output cap. */
+/**
+ * Run a shell command inside the sandbox, with a hard timeout, an output cap, and file-size and
+ * process-count limits. The command itself runs in a fresh `bash -c`, exactly as given.
+ */
 export function runSandboxed(
   command: string,
   spec: SandboxSpec,
@@ -135,9 +178,8 @@ export function runSandboxed(
 ): Promise<RunOutcome> {
   const t0 = performance.now();
   const env = cleanEnv(spec.tmp);
-  const [bin, args] = spec.disabled
-    ? ["/bin/bash", ["-c", command]]
-    : ["/usr/bin/sandbox-exec", ["-p", seatbeltProfile(spec), "/bin/bash", "-c", command]];
+  const shell = ["/bin/bash", "-c", `${limitsPrelude()}exec /bin/bash -c "$0"`, command];
+  const [bin, args] = spec.disabled ? [shell[0]!, shell.slice(1)] : ["/usr/bin/sandbox-exec", ["-p", seatbeltProfile(spec), ...shell]];
 
   return new Promise((done) => {
     if (opts.signal?.aborted) {

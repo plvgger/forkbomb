@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApfsForker } from "../src/fork/forker.js";
-import { DEFAULT_PROTECT, judge, parseCounts, score } from "../src/judge.js";
+import { DEFAULT_PROTECT, brokenTestCommand, judge, parseCounts, score, testInfraFiles } from "../src/judge.js";
 import { globToRegExp } from "../src/util.js";
 import { tempDir, writeTree } from "./helpers.js";
 
@@ -46,12 +46,74 @@ describe("protect globs", () => {
   const g = DEFAULT_PROTECT.map(globToRegExp);
   const hit = (p: string) => g.some((r) => r.test(p));
   it("covers test files and config", () => {
-    for (const p of ["calc.test.js", "src/a.spec.ts", "tests/x.py", "pkg/test/helper.js", "test_x.py", "package.json", "web/package.json", "vitest.config.ts"]) {
+    for (const p of ["calc.test.js", "src/a.spec.ts", "tests/x.py", "pkg/test/helper.js", "test_x.py", "package.json", "web/package.json", "vitest.config.ts",
+      "tsconfig.json", "tsconfig.build.json", "babel.config.js", ".babelrc", "vitest.setup.ts", "src/setupTests.ts", "jest.setup.js", ".npmrc", "sitecustomize.py"]) {
       expect(hit(p), p).toBe(true);
     }
   });
   it("leaves source alone", () => {
-    for (const p of ["calc.js", "src/latest.ts", "contest.py", "src/testing-utils.js"]) expect(hit(p), p).toBe(false);
+    for (const p of ["calc.js", "src/latest.ts", "contest.py", "src/testing-utils.js", "src/config.ts", "src/setup.ts"]) expect(hit(p), p).toBe(false);
+  });
+});
+
+describe("testInfraFiles", () => {
+  const tree = {
+    "package.json": JSON.stringify({
+      main: "index.js",
+      exports: { require: "./lib/index.cjs" },
+      scripts: { pretest: "node prep.mjs", test: "node scripts/run.mjs && npm run lint", lint: "node lint.mjs --config=lint.json", build: "node build.mjs" },
+      jest: { setupFilesAfterEnv: ["<rootDir>/jest-after.js"] },
+    }),
+    "index.js": "",
+    "lib/index.cjs": "",
+    "prep.mjs": "",
+    "scripts/run.mjs": "",
+    "lint.mjs": "",
+    "lint.json": "{}",
+    "build.mjs": "",
+    "jest-after.js": "",
+    "vitest.config.ts": 'import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: { setupFiles: ["./vsetup.ts"], globalSetup: "./global.ts", include: ["src/**/*.test.ts"] } });\n',
+    "vsetup.ts": "",
+    "global.ts": "",
+    ".mocharc.yml": "require: ./mocha-setup.js\nspec: test/**/*.js\n",
+    "mocha-setup.js": "",
+    "runner.mjs": "",
+    "imp.mjs": "",
+  };
+
+  it("finds the scripts the test command runs and the setup files its config loads, and leaves source alone", async () => {
+    const root = tempDir("infra");
+    writeTree(root, tree);
+    expect(await testInfraFiles(root, "npm test")).toEqual(
+      ["global.ts", "jest-after.js", "lint.json", "lint.mjs", "mocha-setup.js", "prep.mjs", "scripts/run.mjs", "vsetup.ts"],
+    );
+    const direct = await testInfraFiles(root, "node --import ./imp.mjs runner.mjs 2>&1 | tail -20");
+    expect(direct).toContain("runner.mjs");
+    expect(direct).toContain("imp.mjs");
+    expect(direct).not.toContain("prep.mjs"); // npm scripts only count when npm runs them
+    for (const p of ["index.js", "lib/index.cjs", "build.mjs"]) expect(direct).not.toContain(p);
+  });
+
+  it("never reaches outside the repo", async () => {
+    const root = tempDir("infra");
+    writeTree(root, { "a.sh": "" });
+    expect(await testInfraFiles(root, "bash a.sh /etc/hosts ../outside.sh")).toEqual(["a.sh"]);
+  });
+});
+
+describe("brokenTestCommand", () => {
+  const out = (o: Partial<{ code: number | null; output: string; timedOut: boolean }>) => ({ code: 1, output: "", timedOut: false, aborted: false, ms: 1, ...o });
+  const none = { passed: null, failed: null };
+  it("refuses a command that can't run, a missing npm script and a suite that never exits", () => {
+    expect(brokenTestCommand(out({ code: 127, output: "/bin/bash: nosuchtestcmd: command not found" }), none, 300_000)).toMatch(/exit 127: command not found/);
+    expect(brokenTestCommand(out({ code: 126 }), none, 300_000)).toMatch(/not executable/);
+    expect(brokenTestCommand(out({ output: 'npm error Missing script: "tset"' }), none, 300_000)).toMatch(/script that doesn't exist/);
+    expect(brokenTestCommand(out({ code: null, timedOut: true, output: "Tests  3 passed (3)\nwatching for changes" }), { passed: 3, failed: 0 }, 300_000)).toMatch(/didn't exit/);
+  });
+  it("lets a real failing suite through, and a hang that may be the bug itself", () => {
+    expect(brokenTestCommand(out({ output: "ℹ pass 4\nℹ fail 10" }), { passed: 4, failed: 10 }, 300_000)).toBeNull();
+    expect(brokenTestCommand(out({ output: "Error: ENOENT: no such file or directory, open 'fixture.json'" }), none, 300_000)).toBeNull();
+    expect(brokenTestCommand(out({ code: null, timedOut: true, output: "running..." }), none, 300_000)).toBeNull();
   });
 });
 

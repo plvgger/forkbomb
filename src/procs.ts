@@ -27,16 +27,19 @@ export function killGroup(pid: number | undefined, signal: NodeJS.Signals = "SIG
   groups.delete(pid);
 }
 
-/** Kill every tracked process group. Safe to call more than once. */
+/**
+ * Signal every tracked process group. Safe to call more than once. After SIGKILL nothing is left to track;
+ * after a gentler signal the groups stay tracked, so a SIGKILL can still follow for any that ignore it.
+ */
 export function killAll(signal: NodeJS.Signals = "SIGKILL"): void {
   for (const pid of groups) {
     try {
       process.kill(-pid, signal);
     } catch {
-      // already gone
+      groups.delete(pid); // already gone
     }
   }
-  groups.clear();
+  if (signal === "SIGKILL") groups.clear();
 }
 
 export function liveGroups(): number {

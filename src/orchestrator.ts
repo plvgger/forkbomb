@@ -1,17 +1,17 @@
 import { realpathSync } from "node:fs";
 import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type ModelClient, runFork, systemPrompt } from "./agent.js";
+import { type ForkResult, type ModelClient, runFork, systemPrompt } from "./agent.js";
 import { BRAND } from "./brand.js";
 import { claudeSettings, keyFiles, runClaudeCodeFork } from "./engines/claude-code.js";
-import { type CreditGate, type HostedChat, runHostedFork } from "./engines/hosted.js";
+import { type CreditGate, type HostedChat, chargedSince, runHostedFork } from "./engines/hosted.js";
 import type { EventBus } from "./events.js";
 import { type Forker, pickForker } from "./fork/forker.js";
-import { DEFAULT_PROTECT, judge, parseCounts, score } from "./judge.js";
+import { DEFAULT_PROTECT, brokenTestCommand, judge, literalRegExp, parseCounts, score, testInfraFiles } from "./judge.js";
 import { type SandboxSpec, runSandboxed } from "./sandbox.js";
 import { strategyFor } from "./strategies.js";
 import { Workspace } from "./tools.js";
-import { Semaphore, exec, freeBytes, globToRegExp, treeBytes } from "./util.js";
+import { Semaphore, exec, fmtBytes, freeBytes, globToRegExp, matchesAny, treeBytes } from "./util.js";
 
 export interface RunOptions {
   runId: string;
@@ -41,6 +41,12 @@ export interface RunOptions {
   runsDir: string;
   concurrency: number;
   forker?: Forker;
+  /** Aborting it stops the run: every fork, judge and test run is killed, nothing is applied, and run_end says so. */
+  signal?: AbortSignal;
+  /** Also make read-only the scripts and setup files the test command runs or loads (see testInfraFiles). Default on. */
+  protectTestInfra?: boolean;
+  /** Stop every fork when free disk space falls below this. Default: 1 GiB, or half of what was free at the start if less. */
+  diskFloorBytes?: number;
 }
 
 export interface RunSummary {
@@ -53,6 +59,9 @@ export interface RunSummary {
   patchPath: string | null;
   applied: boolean;
   costUsd: number | null;
+  /** costUsd includes local estimates the hosted balance couldn't confirm. */
+  costApprox: boolean;
+  interrupted: boolean;
   error?: string;
 }
 
@@ -137,7 +146,8 @@ function better(a: ForkRecord, b: ForkRecord | null): boolean {
 export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary> {
   const t0 = performance.now();
   const repo = realpathSync(o.repo);
-  const runDir = join(realpathSync(o.runsDir), o.runId);
+  const runsDir = realpathSync(o.runsDir);
+  const runDir = join(runsDir, o.runId);
   await mkdir(join(runDir, "forks"), { recursive: true });
   await mkdir(join(runDir, "state"), { recursive: true });
   await mkdir(join(runDir, "tmp"), { recursive: true });
@@ -145,9 +155,12 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   const protect = o.protect.map(globToRegExp);
   const apiSlots = new Semaphore(o.concurrency);
   let costUsd: number | null = 0;
-  const addCost = (c: number | null) => {
-    costUsd = costUsd === null || c === null ? null : costUsd + c;
+  let estimatedUsd = 0;
+  const addCost = (r: ForkResult) => {
+    costUsd = costUsd === null || r.costUsd === null ? null : costUsd + r.costUsd;
+    estimatedUsd += r.costEstimatedUsd ?? 0;
   };
+  const interrupted = () => !!o.signal?.aborted;
   const summary = (extra: Partial<RunSummary>): RunSummary => ({
     runId: o.runId,
     runDir,
@@ -158,8 +171,18 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     patchPath: null,
     applied: false,
     costUsd,
+    costApprox: costUsd !== null && estimatedUsd > 0,
+    interrupted: interrupted(),
     ...extra,
   });
+  /** Ends a run that never got to race: no forks, nothing to clean but the temp dir. */
+  const endEarly = async (ok: boolean, bestScore: number, error?: string): Promise<RunSummary> => {
+    await rm(join(runDir, "tmp"), { recursive: true, force: true });
+    // Nothing ran, so nothing was spent; on a Claude plan there's no dollar figure at all.
+    const spent = o.claudeCode ? null : 0;
+    bus.emit({ type: "run_end", ok, ms: Math.round(performance.now() - t0), costUsd: spent, applied: false, patchPath: null, best: null, bestScore, ...(interrupted() ? { interrupted: true } : {}) });
+    return summary({ ok, bestScore, costUsd: spent, ...(error ? { error } : {}) });
+  };
 
   // The body (pid 1 in the UI): a clone of the user's repo that every fork descends from.
   const body = join(runDir, "body");
@@ -186,31 +209,53 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     network: o.network,
   });
 
+  // Scripts and setup files the test command runs are as much a part of the judge as the tests are.
+  if (o.protectTestInfra !== false) {
+    const extra = (await testInfraFiles(body, o.testCmd)).filter((f) => !matchesAny(f, protect));
+    if (extra.length) {
+      protect.push(...extra.map(literalRegExp));
+      bus.emit({ type: "log", level: "info", msg: `Also read-only for forks, since the test command runs or loads them: ${extra.join(", ")}` });
+    }
+  }
+
+  // The runs folder is denied by name: under ~ that changes nothing, outside ~ it keeps other forks and runs private.
   const specFor = (root: string, id: string): SandboxSpec => ({
     root,
     tmp: join(runDir, "tmp", id),
     network: o.network,
     gitWrite: false,
     disabled: !o.sandbox,
+    denyRead: [runsDir],
   });
 
   // Baseline: how the suite does before any fork touches it.
-  const base = await runSandboxed(o.testCmd, specFor(body, "body"), { timeoutMs: o.testTimeoutMs, maxOutput: o.maxOutput });
+  const base = await runSandboxed(o.testCmd, specFor(body, "body"), { timeoutMs: o.testTimeoutMs, maxOutput: o.maxOutput, signal: o.signal });
   const baseCounts = parseCounts(base.output);
   const baselineTotal = baseCounts.passed !== null && baseCounts.failed !== null ? baseCounts.passed + baseCounts.failed : null;
-  const baseScore = base.timedOut ? 0 : score(base.code, baseCounts, null);
+  const baseScore = base.timedOut || base.aborted ? 0 : score(base.code, baseCounts, null);
   bus.emit({
     type: "baseline",
     passed: baseCounts.passed,
     failed: baseCounts.failed,
-    exitCode: base.timedOut ? null : base.code,
+    exitCode: base.timedOut || base.aborted ? null : base.code,
     score: baseScore,
     outputTail: tailOf(base.output),
   });
+  if (interrupted()) {
+    bus.emit({ type: "log", level: "error", msg: "Interrupted before any fork started." });
+    return endEarly(false, 0);
+  }
+  const broken = brokenTestCommand(base, baseCounts, o.testTimeoutMs);
+  if (broken) {
+    bus.emit({ type: "log", level: "error", msg: `No forks started: ${broken}` });
+    return endEarly(false, baseScore, broken);
+  }
+  if (base.timedOut) {
+    bus.emit({ type: "log", level: "warn", msg: `The test command timed out on the unchanged repo (--test-timeout ${Math.round(o.testTimeoutMs / 1000)}s). Forks get the same limit, so only a fork that fixes the hang can pass.` });
+  }
   if (baseScore === 1) {
     bus.emit({ type: "log", level: "warn", msg: "The test suite already passes. Nothing for the forks to do." });
-    bus.emit({ type: "run_end", ok: true, ms: Math.round(performance.now() - t0), costUsd: 0, applied: false, patchPath: null, best: null, bestScore: 1 });
-    return summary({ ok: true, bestScore: 1 });
+    return endEarly(true, 1);
   }
 
   if (!o.claudeCode && !o.hosted && !o.model) throw new Error("no engine: pass a model client, claudeCode or hosted options");
@@ -218,6 +263,28 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   // Hosted runs share one credit balance: once a fork hits 402, nothing else starts.
   const credit: CreditGate = { exhausted: null };
   let creditLogged = false;
+  // The balance before any fork runs, so the run can report what it was really charged (see chargedSince).
+  const balanceBefore = o.hosted?.balance ? await o.hosted.balance(AbortSignal.timeout(15_000)).catch(() => null) : null;
+
+  // Something that stops every fork at once: Ctrl-C, a rejected key, a disk about to fill up.
+  let halted: string | null = null;
+  let haltRound: ((why: string) => void) | null = null;
+  const halt = (why: string, msg: string) => {
+    if (halted) return;
+    halted = why;
+    bus.emit({ type: "log", level: "error", msg });
+    haltRound?.(why);
+  };
+  const onInterrupt = () => halt("interrupted", "Interrupted: stopping every fork.");
+  if (o.signal?.aborted) onInterrupt();
+  o.signal?.addEventListener("abort", onInterrupt, { once: true });
+  const free0 = await freeBytes(runDir);
+  const diskFloor = o.diskFloorBytes ?? Math.min(1024 ** 3, free0 / 2);
+  const checkDisk = async () => {
+    const free = await freeBytes(runDir).catch(() => Number.POSITIVE_INFINITY);
+    if (free < diskFloor) halt("disk nearly full", `Only ${fmtBytes(free)} left on the disk, so every fork was stopped before it fills up.`);
+  };
+
   let parent: { id: string; dir: string; score: number; strategy: string; summary: string; tail: string; passed: number | null; failed: number | null } = {
     id: "body",
     dir: body,
@@ -233,14 +300,16 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   const losers: string[] = [];
   const staleStates: string[] = [];
 
-  for (let round = 1; round <= o.rounds && !winner && !credit.exhausted; round++) {
+  for (let round = 1; round <= o.rounds && !winner && !credit.exhausted && !halted; round++) {
+    await checkDisk();
+    if (halted) break;
     const ids = Array.from({ length: o.forks }, (_, i) => `${round}.${String(i + 1).padStart(2, "0")}`);
     const dirs = ids.map((id) => join(runDir, "forks", id));
 
     const workspaceBytes = await treeBytes(parent.dir);
-    const free0 = await freeBytes(runDir);
+    const freeBefore = await freeBytes(runDir);
     const clones = await forker.fork(parent.dir, dirs);
-    const free1 = await freeBytes(runDir);
+    const freeAfter = await freeBytes(runDir);
     bus.emit({
       type: "fork",
       round,
@@ -249,7 +318,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
       msEach: clones.map((c) => Math.round(c.ms * 100) / 100),
       workspaceBytes,
       logicalBytes: workspaceBytes * ids.length,
-      physicalBytes: Math.max(0, free0 - free1),
+      physicalBytes: Math.max(0, freeBefore - freeAfter),
       forker: forker.name,
     });
 
@@ -258,6 +327,16 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     const why: Array<"killed" | "timeout"> = ids.map(() => "killed");
     const state: Array<"running" | "judging" | "done"> = ids.map(() => "running");
     let raceWinner: ForkRecord | null = null;
+    const stopOthers = (except: number, reason: string) =>
+      ids.forEach((other, j) => {
+        if (j !== except && state[j] !== "done" && !controllers[j]!.signal.aborted) {
+          why[j] = "killed";
+          controllers[j]!.abort();
+          bus.emit({ type: "kill", fork: other, why: reason });
+        }
+      });
+    haltRound = (reason) => stopOthers(-1, reason);
+    const diskTimer = setInterval(() => void checkDisk(), 2000);
 
     const context =
       parent.id === "body"
@@ -290,6 +369,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
                   prompt,
                   model: o.claudeCode!.model,
                   effort: o.effort,
+                  maxTurns: o.maxTurns,
                   network: o.network,
                   signal: ctl.signal,
                   abortReason: () => why[i]!,
@@ -326,14 +406,19 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
                 apiSlots,
               });
         clearTimeout(timer);
-        addCost(result.costUsd);
+        addCost(result);
         bus.emit({ type: "fork_done", fork: id, ...result });
         if (credit.exhausted && !creditLogged) {
           creditLogged = true;
           bus.emit({ type: "log", level: "error", msg: `Hosted credit ran out, so no more forks will start. ${credit.exhausted}` });
         }
-
-        if (result.reason === "killed") {
+        // A rejected key means every other fork fails the same way: stop them all rather than judge nothing.
+        if (result.fatal) {
+          state[i] = "done";
+          halt("stopped", result.fatal);
+          return null;
+        }
+        if (result.reason === "killed" || (ctl.signal.aborted && why[i] === "killed")) {
           state[i] = "done";
           return null;
         }
@@ -361,6 +446,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
             tmpDir: join(runDir, "tmp", `judge-${id}`),
             network: o.network,
             sandbox: o.sandbox,
+            denyRead: [runsDir],
           },
           judgeCtl.signal,
         ).catch((err: Error) => {
@@ -405,19 +491,15 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
           finishedAt: performance.now(),
         };
 
-        if (o.mode === "race" && v.score === 1 && !raceWinner) {
+        if (o.mode === "race" && v.score === 1 && !raceWinner && !halted) {
           raceWinner = rec;
-          ids.forEach((other, j) => {
-            if (j !== i && state[j] !== "done") {
-              why[j] = "killed";
-              controllers[j]!.abort();
-              bus.emit({ type: "kill", fork: other, why: `${id} passed first` });
-            }
-          });
+          stopOthers(i, `${id} passed first`);
         }
         return rec;
       }),
     );
+    clearInterval(diskTimer);
+    haltRound = null;
 
     let roundBest: ForkRecord | null = raceWinner;
     if (!roundBest) for (const r of records) if (r && better(r, roundBest)) roundBest = r;
@@ -442,10 +524,13 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
       };
     }
   }
+  o.signal?.removeEventListener("abort", onInterrupt);
 
+  // A "best" fork is only worth keeping if it did better than the repo did on its own.
+  const improved = overallBest && overallBest.score > baseScore ? overallBest : null;
   let patchPath: string | null = null;
   let applied = false;
-  const final = winner ?? overallBest;
+  const final = winner ?? improved;
   if (final && final.patch.trim()) {
     patchPath = join(runDir, winner ? "winner.patch" : "best.patch");
     await writeFile(patchPath, final.patch);
@@ -461,18 +546,23 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
       patch: winner.patch,
       summary: winner.summary,
     });
-    if (o.apply && patchPath) {
+    if (o.apply && patchPath && interrupted()) {
+      bus.emit({ type: "log", level: "warn", msg: `Not applied, since the run was interrupted. The patch is saved at ${patchPath}.` });
+    } else if (o.apply && patchPath) {
       const r = await applyPatch(repo, patchPath);
       applied = r.ok;
       if (!r.ok) bus.emit({ type: "log", level: "error", msg: `Couldn't apply the patch to ${repo}: ${r.error}. It's saved at ${patchPath}.` });
     }
-  } else {
+  } else if (!halted) {
+    const baseline = baselineTotal !== null ? `${baseCounts.passed}/${baselineTotal} passing` : `${Math.round(baseScore * 100)}%`;
     bus.emit({
       type: "log",
       level: "warn",
-      msg: overallBest
-        ? `No fork passed the whole suite. Best was ${overallBest.id} (${overallBest.strategy}) at ${Math.round(overallBest.score * 100)}%.`
-        : "No fork produced a result.",
+      msg: improved
+        ? `No fork passed the whole suite. Best was ${improved.id} (${improved.strategy}) at ${Math.round(improved.score * 100)}%, up from ${baseline}.`
+        : overallBest
+          ? `No fork passed the whole suite or did better than the baseline (${baseline}).`
+          : "No fork produced a result.",
     });
   }
 
@@ -482,15 +572,27 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   }
   await rm(join(runDir, "tmp"), { recursive: true, force: true });
 
+  // Hosted turns the run hung up on were estimated here. Once the gateway has settled them, the balance says
+  // what they really cost; if it can't be read or doesn't add up, the estimate stands and is marked as one.
+  if (costUsd !== null && estimatedUsd > 0 && balanceBefore !== null && !interrupted()) {
+    const charged = await chargedSince(o.hosted!, balanceBefore, { usd: costUsd, estimatedUsd }, { signal: o.signal });
+    if (charged !== null) {
+      costUsd = charged;
+      estimatedUsd = 0;
+    }
+  }
+
   bus.emit({
     type: "run_end",
     ok: !!winner,
     ms: Math.round(performance.now() - t0),
     costUsd,
+    ...(costUsd !== null && estimatedUsd > 0 ? { costApprox: true } : {}),
     applied,
     patchPath,
     best: final?.id ?? null,
     bestScore: final?.score ?? 0,
+    ...(interrupted() ? { interrupted: true } : {}),
   });
   return summary({
     ok: !!winner,
@@ -499,6 +601,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     bestScore: final?.score ?? 0,
     patchPath,
     applied,
+    ...(halted && halted !== "interrupted" ? { error: halted } : {}),
   });
 }
 

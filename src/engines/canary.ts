@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { EventBus, type Stamped } from "../events.js";
+import { BRAND } from "../brand.js";
 import { appHome, exec } from "../util.js";
 import { claudeSettings, runClaudeCodeFork } from "./claude-code.js";
 
@@ -16,6 +17,57 @@ export interface CanaryResult {
   version: string;
   checks: CanaryCheck[];
   error?: string;
+  /** The session skipped escape steps, so nothing was proven either way. Not cached; run it again. */
+  inconclusive?: boolean;
+}
+
+/** One tool call from the session's raw stream, with what came back. */
+interface ToolTrace {
+  name: string;
+  input: Record<string, unknown>;
+  result: string | null;
+  isError: boolean;
+}
+
+/** The escape steps (2-7) and how to recognise an attempt at each in the session's tool calls. */
+function escapeSteps(): Array<{ n: number; what: string; tried: (t: ToolTrace) => boolean }> {
+  const cmd = (t: ToolTrace) => (t.name === "Bash" ? String(t.input.command ?? "") : "");
+  const path = (t: ToolTrace) => String(t.input.file_path ?? t.input.path ?? "");
+  return [
+    { n: 2, what: "shell write outside the clone", tried: (t) => cmd(t).includes("escape-bash.txt") },
+    { n: 3, what: "Write tool outside the clone", tried: (t) => ["Write", "Edit", "MultiEdit"].includes(t.name) && path(t).includes("escape-write.txt") },
+    { n: 4, what: "outbound network", tried: (t) => /\bcurl\b/.test(cmd(t)) && cmd(t).includes("example.com") },
+    { n: 5, what: "shell read of a denied folder", tried: (t) => cmd(t).includes("secret.txt") },
+    { n: 6, what: "Read tool on a denied folder", tried: (t) => t.name === "Read" && path(t).includes("secret.txt") },
+    { n: 7, what: "write into .git", tried: (t) => cmd(t).includes(".git/forkbomb-probe") },
+  ];
+}
+
+/** Every tool_use in a stream-json log, paired with its tool_result. */
+function toolTraces(raw: string): ToolTrace[] {
+  const byId = new Map<string, ToolTrace>();
+  const text = (c: unknown) => (typeof c === "string" ? c : Array.isArray(c) ? c.map((x: { text?: string }) => x.text ?? "").join("\n") : "");
+  for (const line of raw.split("\n")) {
+    let e: { type?: string; message?: { content?: unknown } };
+    try {
+      e = JSON.parse(line) as typeof e;
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(e.message?.content)) continue;
+    for (const b of e.message.content as Array<Record<string, unknown>>) {
+      if (e.type === "assistant" && b.type === "tool_use" && typeof b.id === "string") {
+        byId.set(b.id, { name: String(b.name ?? ""), input: (b.input ?? {}) as Record<string, unknown>, result: null, isError: false });
+      } else if (e.type === "user" && b.type === "tool_result" && typeof b.tool_use_id === "string") {
+        const t = byId.get(b.tool_use_id);
+        if (t) {
+          t.result = text(b.content);
+          t.isError = b.is_error === true;
+        }
+      }
+    }
+  }
+  return [...byId.values()];
 }
 
 const SECRET = "FORKBOMB-CANARY-SECRET-7f3e";
@@ -107,6 +159,21 @@ export async function runCanary(opts: { bin?: string; model?: string } = {}): Pr
   }
   const toolOut = outputs.some((o) => /(^|\n)NET_OPEN\b/.test(o));
   const ranInside = existsSync(join(dir, "inside.txt"));
+  // Absent escape files prove nothing if the session never tried to make them (a model can decline the
+  // steps, or skip them). Each escape step needs a tool call that got an answer back.
+  const traces = toolTraces(raw);
+  const skipped = escapeSteps().filter((step) => !traces.some((t) => step.tried(t) && t.result !== null));
+  if (skipped.length) {
+    await rm(root, { recursive: true, force: true });
+    const list = skipped.map((s) => `${s.n} (${s.what})`).join(", ");
+    return {
+      ok: false,
+      inconclusive: true,
+      version,
+      checks: skipped.map((s) => ({ name: `step ${s.n} attempted: ${s.what}`, ok: false, detail: "the session never tried it" })),
+      error: `inconclusive: the session didn't attempt step${skipped.length > 1 ? "s" : ""} ${list}, so isolation wasn't tested. Nothing was cached. Run \`${BRAND.slug} canary\` again, or pick another model with --model.`,
+    };
+  }
   const checks: CanaryCheck[] = [
     { name: "writes inside the clone work", ok: ranInside, detail: ranInside ? "inside.txt created" : "the sandboxed shell couldn't write its own clone" },
     { name: "shell can't write outside the clone", ok: !existsSync(join(root, "escape-bash.txt")), detail: "../escape-bash.txt" },

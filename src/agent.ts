@@ -96,8 +96,12 @@ export interface ForkResult {
   inputTokens: number;
   outputTokens: number;
   costUsd: number | null;
+  /** The part of costUsd worked out locally rather than reported by the gateway: turns this fork hung up on. */
+  costEstimatedUsd?: number;
   summary: string;
   error?: string;
+  /** Set when no fork can get anywhere (the key was rejected), so the run stops instead of starting more. */
+  fatal?: string;
 }
 
 /** One fork: a plain tool-use loop over bash and the text editor, inside its own clone. */
@@ -196,10 +200,18 @@ export async function runFork(cfg: ForkConfig): Promise<ForkResult> {
     }
   } catch (e) {
     if (signal.aborted || e instanceof Anthropic.APIUserAbortError) return finish(cfg.abortReason());
-    const msg =
-      e instanceof Anthropic.APIError ? `API ${e.status ?? ""} ${e.message}`.trim() : e instanceof Error ? e.message : String(e);
+    const msg = e instanceof Anthropic.APIError ? apiErrorText(e) : e instanceof Error ? e.message : String(e);
+    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
+      return { ...finish("error", msg), fatal: `The Anthropic API rejected the key (${e.status}), so the run stopped. Check ANTHROPIC_API_KEY.` };
+    }
     return finish("error", msg);
   }
+}
+
+/** "API 401 {...}": the SDK's message already starts with the status when there is one, so it isn't repeated. */
+export function apiErrorText(e: InstanceType<typeof Anthropic.APIError>): string {
+  const status = e.status == null ? "" : String(e.status);
+  return (status && !e.message.startsWith(status) ? `API ${status} ${e.message}` : `API ${e.message}`).trim();
 }
 
 export function systemPrompt(opts: { bashTimeoutS: number; engine: "api" | "claude-code" | "hosted" }): string {

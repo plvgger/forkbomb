@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelClient, TurnRequest } from "../src/agent.js";
 
@@ -11,6 +11,23 @@ export function tempDir(prefix: string): string {
   const base = join(process.cwd(), ".test-tmp", "work");
   mkdirSync(base, { recursive: true });
   return realpathSync(mkdtempSync(join(base, `${prefix}-`)));
+}
+
+/**
+ * A stand-in `claude` binary (test/fake-claude.mjs) that plays `scripts`, picked by the strategy in the prompt.
+ * The engine hands claude an allowlisted env, so the config is baked into a wrapper script. Calls go to `log`.
+ */
+export function fakeClaude(scripts: Record<string, unknown[]>): { work: string; bin: string; log: string } {
+  const work = tempDir("fake-claude");
+  const scriptFile = join(work, "scripts.json");
+  const log = join(work, "calls.jsonl");
+  writeFileSync(scriptFile, JSON.stringify(scripts));
+  const bin = join(work, "claude");
+  const q = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+  const fake = join(process.cwd(), "test", "fake-claude.mjs");
+  writeFileSync(bin, `#!/bin/sh\nFAKE_CLAUDE_SCRIPTS=${q(scriptFile)} FAKE_CLAUDE_LOG=${q(log)} exec ${q(process.execPath)} ${q(fake)} "$@"\n`);
+  chmodSync(bin, 0o755);
+  return { work, bin, log };
 }
 
 export function writeTree(root: string, files: Record<string, string>): void {

@@ -1,9 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import Anthropic from "@anthropic-ai/sdk";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { ModelClient } from "../src/agent.js";
 import { EventBus, type Stamped } from "../src/events.js";
 import { DEFAULT_PROTECT } from "../src/judge.js";
 import { type RunOptions, runRace } from "../src/orchestrator.js";
+import { liveGroups } from "../src/procs.js";
 import { FakeModel, message, tempDir, text, toolUse, writeTree } from "./helpers.js";
 
 const REPO = {
@@ -157,5 +160,123 @@ describe("runRace", () => {
     expect(done && done.type === "fork_done" && done.reason).toBe("timeout");
     const j = events.find((e) => e.type === "judge");
     expect(j && j.type === "judge" && j.passed).toBe(1);
+  });
+
+  it("doesn't fork at all when the test command itself can't run (regression)", async () => {
+    for (const testCmd of ["nosuchtestcmd --run", "npm run tset"]) {
+      const repo = tempDir("repo");
+      writeTree(repo, REPO);
+      let calls = 0;
+      const model: ModelClient = { model: "fake", turn: async () => (calls++, message([text("x")])) };
+      const { bus, events } = collect();
+      const res = await runRace(options(repo, new FakeModel({}), { model, testCmd }), bus);
+      expect(res.ok, testCmd).toBe(false);
+      expect(res.error, testCmd).toMatch(/Check --test/);
+      expect(calls, testCmd).toBe(0);
+      expect(events.some((e) => e.type === "fork" || e.type === "fork_start"), testCmd).toBe(false);
+      expect(events.some((e) => e.type === "log" && e.level === "error" && e.msg.startsWith("No forks started")), testCmd).toBe(true);
+      expect(events.at(-1)?.type, testCmd).toBe("run_end");
+    }
+  });
+
+  it("names no best fork, and saves no best.patch, when no fork beat the baseline (regression)", async () => {
+    const repo = tempDir("repo");
+    writeTree(repo, REPO);
+    // Every fork changes something harmless: a patch, but the suite still fails as before.
+    const noop = toolUse("str_replace_based_edit_tool", { command: "create", path: "/workspace/NOTES.md", file_text: "tried\n" });
+    const { bus, events } = collect();
+    const res = await runRace(options(repo, new FakeModel({ "*": [message([noop], "tool_use"), message([text("Could not fix it.")])] }), { forks: 2 }), bus);
+    expect(res).toMatchObject({ ok: false, best: null, patchPath: null });
+    expect(existsSync(join(res.runDir, "best.patch"))).toBe(false);
+    const warn = events.find((e) => e.type === "log" && e.level === "warn");
+    expect(warn && warn.type === "log" && warn.msg).toBe("No fork passed the whole suite or did better than the baseline (0/2 passing).");
+  });
+
+  it("stops every fork when the API rejects the key, instead of judging a run of failures (regression)", async () => {
+    const repo = tempDir("repo");
+    writeTree(repo, REPO);
+    let calls = 0;
+    const model: ModelClient = {
+      model: "fake",
+      turn: async (_req, signal) => {
+        calls++;
+        if (calls === 1) throw new Anthropic.AuthenticationError(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }, undefined, new Headers());
+        await new Promise((done) => signal.addEventListener("abort", done));
+        throw new Error("aborted");
+      },
+    };
+    const { bus, events } = collect();
+    const res = await runRace(options(repo, new FakeModel({}), { model, forks: 3, rounds: 2 }), bus);
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(3); // one round, and nobody asked twice
+    expect(events.filter((e) => e.type === "fork")).toHaveLength(1);
+    expect(events.some((e) => e.type === "judging")).toBe(false);
+    const first = events.find((e) => e.type === "fork_done" && e.reason === "error");
+    expect(first && first.type === "fork_done" && first.error).toMatch(/^API 401 \{/); // not "API 401 401"
+    expect(events.some((e) => e.type === "log" && e.msg.includes("rejected the key (401)"))).toBe(true);
+    expect(events.filter((e) => e.type === "kill")).toHaveLength(2);
+  });
+
+  it("stops cleanly when interrupted mid-race: forks and their commands killed, clones and temp files gone, run_end says so (regression)", async () => {
+    const repo = tempDir("repo");
+    writeTree(repo, REPO);
+    const hang = message([toolUse("bash", { command: "sleep 300 & sleep 300" })], "tool_use");
+    const ctl = new AbortController();
+    const { bus, events } = collect();
+    bus.on((e) => {
+      if (e.type === "tool" || (e.type === "fork_start" && e.fork === "1.03")) setTimeout(() => ctl.abort(), 400);
+    });
+    const t0 = performance.now();
+    const res = await runRace(options(repo, new FakeModel({ "*": [hang, hang] }), { signal: ctl.signal, apply: true, rounds: 2 }), bus);
+    expect(performance.now() - t0).toBeLessThan(8000);
+    expect(res).toMatchObject({ ok: false, interrupted: true, applied: false });
+    expect(liveGroups()).toBe(0);
+    expect(events.filter((e) => e.type === "fork")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "kill").length).toBeGreaterThan(0);
+    expect(events.at(-1)).toMatchObject({ type: "run_end", ok: false, interrupted: true });
+    expect(readdirSync(join(res.runDir, "forks"))).toEqual([]);
+    expect(existsSync(join(res.runDir, "tmp"))).toBe(false);
+  });
+
+  it("stops at once when interrupted during the baseline", async () => {
+    const repo = tempDir("repo");
+    writeTree(repo, REPO);
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 500);
+    const t0 = performance.now();
+    const { bus, events } = collect();
+    const res = await runRace(options(repo, new FakeModel({}), { signal: ctl.signal, testCmd: "sleep 60; node --test" }), bus);
+    expect(performance.now() - t0).toBeLessThan(5000);
+    expect(res).toMatchObject({ ok: false, interrupted: true });
+    expect(liveGroups()).toBe(0);
+    expect(events.some((e) => e.type === "fork")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "run_end", interrupted: true });
+  });
+
+  it("stops every fork before the disk fills up", async () => {
+    const repo = tempDir("repo");
+    writeTree(repo, REPO);
+    const { bus, events } = collect();
+    const res = await runRace(options(repo, new FakeModel({ "*": [message([fixSum], "tool_use")] }), { diskFloorBytes: Number.MAX_SAFE_INTEGER }), bus);
+    expect(res).toMatchObject({ ok: false, error: "disk nearly full" });
+    expect(events.some((e) => e.type === "fork")).toBe(false);
+    expect(events.some((e) => e.type === "log" && /left on the disk/.test(e.msg))).toBe(true);
+  });
+
+  it("keeps a fork from faking a pass through a script the test command runs (regression)", async () => {
+    const repo = tempDir("repo");
+    // The suite runs through a small runner script, which no protect glob names.
+    writeTree(repo, {
+      ...REPO,
+      "runner.mjs": 'import { spawnSync } from "node:child_process";\nconst r = spawnSync("node", ["--test"], { stdio: "inherit" });\nprocess.exit(r.status ?? 1);\n',
+    });
+    const fake = toolUse("str_replace_based_edit_tool", { command: "create", path: "/workspace/runner.mjs", file_text: 'console.log("# pass 2\\n# fail 0");\n' });
+    const { bus, events } = collect();
+    const res = await runRace(options(repo, new FakeModel({ "*": [message([fake], "tool_use"), message([text("All green.")])] }), { forks: 1, testCmd: "node runner.mjs" }), bus);
+    expect(res.ok).toBe(false);
+    expect(events.some((e) => e.type === "log" && e.msg.includes("Also read-only for forks") && e.msg.includes("runner.mjs"))).toBe(true);
+    const j = events.find((e) => e.type === "judge");
+    expect(j && j.type === "judge" && j.tampered).toEqual(["runner.mjs"]);
+    expect(j && j.type === "judge" && j.score).toBeLessThan(1);
   });
 });

@@ -80,10 +80,21 @@ export class ChatAssembler {
   costUsd: number | null = null;
   /** Spendable balance after settling, from the same comment (x-credits-remaining-usd). */
   remainingUsd: number | null = null;
+  /**
+   * What the gateway counts as generated when it has to bill a stream itself (the client hung up first): bytes of
+   * content, reasoning and tool calls, and how many deltas carried any. Counted as web/lib/server/gateway counts them.
+   */
+  generatedBytes = 0;
+  generatedChunks = 0;
   #id: string | undefined;
   #model: string | undefined;
   #usage: ChatCompletion["usage"];
   readonly #choices = new Map<number, Choice>();
+
+  /** The usage chunk, once it arrived (it comes last, just before the settlement). */
+  get usage(): ChatCompletion["usage"] {
+    return this.#usage;
+  }
 
   /** At least one choice said why it stopped, so the answer is whole even without [DONE]. */
   get finished(): boolean {
@@ -174,24 +185,42 @@ export class ChatAssembler {
       reasoning?: unknown;
       tool_calls?: unknown;
     };
-    if (typeof d.content === "string") c.content += d.content;
+    let bytes = 0;
+    if (typeof d.content === "string") {
+      c.content += d.content;
+      bytes += utf8Bytes(d.content);
+    }
     // Some servers send the same thought under both names: take one, never both.
     const thought = typeof d.reasoning_content === "string" ? d.reasoning_content : typeof d.reasoning === "string" ? d.reasoning : "";
+    bytes += utf8Bytes(thought);
     if (thought && c.reasoning.length < MAX_REASONING) c.reasoning = (c.reasoning + thought).slice(0, MAX_REASONING);
-    if (!Array.isArray(d.tool_calls)) return;
-    d.tool_calls.forEach((rawCall: unknown, i) => {
-      if (!rawCall || typeof rawCall !== "object") return;
-      const t = rawCall as { index?: unknown; id?: unknown; function?: { name?: unknown; arguments?: unknown } | null };
-      const at = Number.isInteger(t.index) ? (t.index as number) : i;
-      let call = c.calls.get(at);
-      if (!call) c.calls.set(at, (call = { id: "", name: "", arguments: "" }));
-      // id and name come whole in the first delta of a call (a repeat replaces); arguments arrive in pieces.
-      if (typeof t.id === "string" && t.id) call.id = t.id;
-      if (typeof t.function?.name === "string" && t.function.name) call.name = t.function.name;
-      if (typeof t.function?.arguments === "string") call.arguments += t.function.arguments;
-    });
+    if (Array.isArray(d.tool_calls)) {
+      d.tool_calls.forEach((rawCall: unknown, i) => {
+        if (!rawCall || typeof rawCall !== "object") return;
+        const t = rawCall as { index?: unknown; id?: unknown; function?: { name?: unknown; arguments?: unknown } | null };
+        const at = Number.isInteger(t.index) ? (t.index as number) : i;
+        let call = c.calls.get(at);
+        if (!call) c.calls.set(at, (call = { id: "", name: "", arguments: "" }));
+        // id and name come whole in the first delta of a call (a repeat replaces); arguments arrive in pieces.
+        if (typeof t.id === "string" && t.id) call.id = t.id;
+        if (typeof t.function?.name === "string") {
+          bytes += utf8Bytes(t.function.name);
+          if (t.function.name) call.name = t.function.name;
+        }
+        if (typeof t.function?.arguments === "string") {
+          bytes += utf8Bytes(t.function.arguments);
+          call.arguments += t.function.arguments;
+        }
+      });
+    }
+    if (bytes > 0) {
+      this.generatedBytes += bytes;
+      this.generatedChunks++;
+    }
   }
 }
+
+export const utf8Bytes = (s: string) => Buffer.byteLength(s, "utf8");
 
 /** "x-request-cost-usd=0.001234 x-credits-remaining-usd=4.998766" -> the named number, or null. */
 function field(text: string, name: string): number | null {

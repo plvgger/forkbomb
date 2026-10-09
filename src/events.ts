@@ -1,4 +1,5 @@
 import { appendFileSync } from "node:fs";
+import { basename } from "node:path";
 
 export type RunEvent =
   | {
@@ -40,8 +41,11 @@ export type RunEvent =
       inputTokens: number;
       outputTokens: number;
       costUsd: number | null;
+      /** The part of costUsd this client estimated (hosted turns it hung up on) rather than read from the gateway. */
+      costEstimatedUsd?: number;
       summary: string;
       error?: string;
+      fatal?: string;
     }
   | { type: "judging"; fork: string }
   | {
@@ -59,7 +63,20 @@ export type RunEvent =
   | { type: "kill"; fork: string; why: string }
   | { type: "round_end"; round: number; best: string | null; bestScore: number }
   | { type: "winner"; fork: string; round: number; score: number; diffLines: number; filesChanged: number; patch: string; summary: string }
-  | { type: "run_end"; ok: boolean; ms: number; costUsd: number | null; applied: boolean; patchPath: string | null; best: string | null; bestScore: number }
+  | {
+      type: "run_end";
+      ok: boolean;
+      ms: number;
+      costUsd: number | null;
+      /** costUsd includes estimates (hosted turns killed mid-answer) the balance couldn't confirm. */
+      costApprox?: boolean;
+      applied: boolean;
+      patchPath: string | null;
+      best: string | null;
+      bestScore: number;
+      /** Stopped early by Ctrl-C (or SIGTERM/SIGHUP): forks were killed, nothing was applied. */
+      interrupted?: boolean;
+    }
   | { type: "log"; level: "info" | "warn" | "error"; msg: string };
 
 export type Stamped = RunEvent & { t: number };
@@ -109,6 +126,41 @@ export function parseEventLog(text: string): Stamped[] {
     out.push(e as Stamped);
   });
   return out;
+}
+
+/** /tmp/x and /private/tmp/x are the same folder on macOS: both spellings show up in output. */
+function spellings(p: string): string[] {
+  const out = [p];
+  if (/^\/private\/(?:tmp|var|etc)\//.test(p)) out.push(p.slice("/private".length));
+  else if (/^\/(?:tmp|var|etc)\//.test(p)) out.push(`/private${p}`);
+  return out;
+}
+
+/**
+ * A run's events with this machine's paths taken out, for a replay meant to be hosted anywhere: the run
+ * folder becomes <run>, the repo ./<its folder name>, the home folder ~, and any other /Users/<name> or
+ * /home/<name> ~ as well. Returns the events and how many string fields changed.
+ */
+export function scrubPaths(events: Stamped[], o: { home: string; runDirs?: string[]; repo?: string }): { events: Stamped[]; changed: number } {
+  const swaps: Array<[string, string]> = [];
+  for (const d of o.runDirs ?? []) for (const s of spellings(d)) swaps.push([s, "<run>"]);
+  if (o.repo && o.repo !== "/") for (const s of spellings(o.repo)) swaps.push([s, `./${basename(o.repo)}`]);
+  for (const s of spellings(o.home)) swaps.push([s, "~"]);
+  swaps.sort((a, b) => b[0].length - a[0].length);
+  let changed = 0;
+  const scrub = (v: unknown): unknown => {
+    if (typeof v === "string") {
+      let s = v;
+      for (const [from, to] of swaps) if (from.length > 1) s = s.split(from).join(to);
+      s = s.replace(/\/(?:Users|home)\/[^/\s"'`:]+/g, "~");
+      if (s !== v) changed++;
+      return s;
+    }
+    if (Array.isArray(v)) return v.map(scrub);
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)]));
+    return v;
+  };
+  return { events: events.map((e) => scrub(e) as Stamped), changed };
 }
 
 type Listener = (e: Stamped) => void;

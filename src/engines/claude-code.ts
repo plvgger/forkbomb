@@ -6,6 +6,7 @@ import { killGroup, track, untrack } from "../procs.js";
 import { createInterface } from "node:readline";
 import type { ForkResult } from "../agent.js";
 import type { EventBus } from "../events.js";
+import { limitsPrelude } from "../sandbox.js";
 import { appHome } from "../util.js";
 
 /**
@@ -22,6 +23,8 @@ export interface ClaudeCodeForkConfig {
   prompt: string;
   model?: string;
   effort: string;
+  /** Agentic turns before Claude Code stops the session (`--max-turns`); unset means its own default. */
+  maxTurns?: number;
   network: boolean;
   signal: AbortSignal;
   abortReason: () => "killed" | "timeout";
@@ -177,6 +180,11 @@ function tidy(summary: string, dir: string): string {
   return summary.split(`${dir}/`).join("/workspace/").split(dir).join("/workspace");
 }
 
+/** "2.1.207 (Claude Code)" -> "2.1.207", for messages that already say Claude Code. */
+export function shortVersion(version: string): string {
+  return version.replace(/\s*\(Claude Code\)\s*$/i, "").trim() || version;
+}
+
 export async function runClaudeCodeFork(cfg: ClaudeCodeForkConfig, settings: object): Promise<ForkResult> {
   const args = [
     "-p",
@@ -201,6 +209,7 @@ export async function runClaudeCodeFork(cfg: ClaudeCodeForkConfig, settings: obj
     cfg.effort,
   ];
   if (cfg.model) args.push("--model", cfg.model);
+  if (cfg.maxTurns) args.push("--max-turns", String(cfg.maxTurns));
 
   let turns = 0;
   let inputTokens = 0;
@@ -213,7 +222,13 @@ export async function runClaudeCodeFork(cfg: ClaudeCodeForkConfig, settings: obj
   if (cfg.signal.aborted) return { reason: cfg.abortReason(), turns, inputTokens, outputTokens, costUsd: null, summary };
 
   mkdirSync(cfg.tmp, { recursive: true });
-  const child = spawn(cfg.claudeBin ?? "claude", args, { cwd: cfg.dir, env: claudeEnv(cfg.tmp), stdio: ["pipe", "pipe", "pipe"], detached: true });
+  // Through sh only to set the same file-size and process limits the sandboxed shells get, then exec claude.
+  const child = spawn("/bin/sh", ["-c", `${limitsPrelude()}exec "$0" "$@"`, cfg.claudeBin ?? "claude", ...args], {
+    cwd: cfg.dir,
+    env: claudeEnv(cfg.tmp),
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: true,
+  });
   track(child.pid);
   child.stdin.end(cfg.prompt);
   child.stderr.on("data", (d: Buffer) => {
@@ -299,8 +314,8 @@ export async function runClaudeCodeFork(cfg: ClaudeCodeForkConfig, settings: obj
   }
   if (fin.subtype === "error_max_turns") return { reason: "max_turns", ...base };
   if (fin.is_error) {
-    const msg = (fin.result ?? fin.subtype ?? "error").slice(0, 400);
-    const hint = /authenticat|log ?in|oauth/i.test(msg) ? " Run `claude auth login` with your Claude subscription." : "";
+    const msg = (fin.result ?? fin.subtype ?? "error").slice(0, 400).trim();
+    const hint = /authenticat|log ?in|oauth/i.test(msg) ? `${/[.!?]$/.test(msg) ? "" : "."} Run \`claude auth login\` with your Claude subscription.` : "";
     return { reason: "error", ...base, error: `${msg}${hint}` };
   }
   return { reason: "end_turn", ...base };

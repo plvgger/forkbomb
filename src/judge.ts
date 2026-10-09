@@ -1,10 +1,15 @@
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { Forker } from "./fork/forker.js";
-import { type SandboxSpec, runSandboxed } from "./sandbox.js";
+import { type RunOutcome, type SandboxSpec, runSandboxed } from "./sandbox.js";
 import { matchesAny, q } from "./util.js";
 
-/** Files a fork may not change. Edits are reverted before the suite runs. */
+/**
+ * Files a fork may not change. Edits are reverted before the suite runs. Beyond the tests themselves this
+ * covers what the test toolchain loads before any test runs: runner and compiler config, setup files,
+ * manifests and lockfiles. testInfraFiles() adds the scripts a particular test command runs.
+ */
 export const DEFAULT_PROTECT = [
   "**/*.test.*",
   "**/*.spec.*",
@@ -30,7 +35,149 @@ export const DEFAULT_PROTECT = [
   "**/Cargo.toml",
   "**/go.mod",
   "**/Makefile",
+  "**/tsconfig*.json",
+  "**/jsconfig*.json",
+  "**/babel.config.*",
+  "**/.babelrc*",
+  "**/.swcrc",
+  "**/vitest.workspace.*",
+  "**/vitest.setup.*",
+  "**/jest.setup.*",
+  "**/setupTests.*",
+  "**/jest.preset.*",
+  "**/karma.conf.*",
+  "**/playwright.config.*",
+  "**/cypress.config.*",
+  "**/.nycrc*",
+  "**/.c8rc*",
+  "**/.npmrc",
+  "**/.yarnrc*",
+  "**/bunfig.toml",
+  "**/deno.json",
+  "**/deno.jsonc",
+  "**/noxfile.py",
+  "**/sitecustomize.py",
+  "**/usercustomize.py",
+  "**/Cargo.lock",
+  "**/go.sum",
+  "**/Gemfile",
+  "**/Gemfile.lock",
+  "**/.rspec",
+  "**/phpunit.xml*",
+  "**/pom.xml",
+  "**/build.gradle*",
+  "**/settings.gradle*",
 ];
+
+/** A regex matching exactly one repo-relative path (testInfraFiles' results), whatever characters it holds. */
+export function literalRegExp(path: string): RegExp {
+  return new RegExp(`^${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+}
+
+/** Words of a shell command line: split on blanks and operators, quotes stripped, `--opt=value` split into both. */
+function shellWords(cmd: string): string[] {
+  const out: string[] = [];
+  for (const m of cmd.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s;&|()<>]+)/g)) {
+    const w = m[1] ?? m[2] ?? m[3] ?? "";
+    out.push(w);
+    const eq = /^--?[\w-]+=(.+)$/.exec(w);
+    if (eq) out.push(eq[1]!);
+  }
+  return out;
+}
+
+/** Keys in a test runner's config whose values name files it loads before any test runs. */
+const SETUP_KEYS =
+  /["']?\b(setupFiles|setupFilesAfterEnv|globalSetup|globalTeardown|setupFile|require|file|loader|import|testEnvironment|runner|testRunner|snapshotResolver|testSequencer|resolver|reporters|transform|watchPlugins)\b["']?\s*[:=]\s*(\[[^\]]*\]|\{[^}]*\}|"[^"]*"|'[^']*'|`[^`]*`)/g;
+
+/**
+ * Files outside the protect globs that the test command still runs or loads: a script it names
+ * (`node runner.mjs`, `bash scripts/test.sh`, `--import ./setup.mjs`), the same in the package.json
+ * scripts it runs (test, pretest, posttest and any `npm run X` they chain), and setup files named in
+ * the runner's config (vitest/jest setupFiles, globalSetup, mocha require). A fork that edits one of
+ * these could make the suite report a pass without fixing anything, so they are read-only like tests.
+ * Returns repo-relative paths of regular files inside `root`.
+ */
+export async function testInfraFiles(root: string, testCmd: string): Promise<string[]> {
+  const rootReal = await realpath(root);
+  const found = new Set<string>();
+  const consider = async (word: string, from = rootReal) => {
+    const w = word.replace(/^<rootDir>\//, "").trim();
+    if (!w || w.length > 400 || /[*?\n]/.test(w) || /^[a-z][\w+.-]*:/i.test(w)) return; // globs, URLs, node:x
+    const abs = isAbsolute(w) ? w : join(from, w);
+    const real = await realpath(abs).catch(() => null);
+    if (!real) return;
+    const rel = relative(rootReal, real);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) return;
+    if (!(await stat(real).catch(() => null))?.isFile()) return;
+    found.add(rel.split(sep).join("/"));
+  };
+
+  const pkg = await readFile(join(rootReal, "package.json"), "utf8")
+    .then((t) => JSON.parse(t) as Record<string, unknown>)
+    .catch(() => null);
+  const scripts = (pkg?.scripts && typeof pkg.scripts === "object" ? pkg.scripts : {}) as Record<string, unknown>;
+
+  // The command, then every package.json script it reaches.
+  const lines = [testCmd];
+  const queued = new Set<string>();
+  const queue = (name: string) => {
+    for (const n of [`pre${name}`, name, `post${name}`]) {
+      if (!queued.has(n) && typeof scripts[n] === "string") {
+        queued.add(n);
+        lines.push(scripts[n] as string);
+      }
+    }
+  };
+  for (let i = 0; i < lines.length && i < 50; i++) {
+    const words = shellWords(lines[i]!);
+    for (const w of words) await consider(w);
+    if (words.some((w) => /^(?:npm|pnpm|yarn|bun)$/.test(w))) {
+      for (const w of words) if (w === "t" || Object.hasOwn(scripts, w)) queue(w === "t" ? "test" : w);
+    }
+  }
+
+  // Setup files named in the runner's config: config files at the root and package.json's runner blocks.
+  const configs: Array<{ text: string; dir: string; all: boolean }> = [];
+  for (const key of ["jest", "mocha", "ava", "vitest"]) {
+    if (pkg?.[key] && typeof pkg[key] === "object") configs.push({ text: JSON.stringify(pkg[key]), dir: rootReal, all: false });
+  }
+  for (const name of await readdir(rootReal).catch(() => [] as string[])) {
+    const mocharc = /^\.mocharc(?:\.\w+)?$/.test(name);
+    if (!mocharc && !/^(?:vitest|vite|jest|karma|playwright|cypress|vitest\.workspace)\.config\.[cm]?[jt]s$|^vitest\.workspace\.[cm]?[jt]s$/.test(name)) continue;
+    const text = await readFile(join(rootReal, name), "utf8").catch(() => "");
+    // A .mocharc is all test config: anything in it that names a file counts.
+    configs.push({ text: text.slice(0, 200_000), dir: rootReal, all: mocharc });
+  }
+  for (const c of configs) {
+    const values = c.all ? [c.text] : [...c.text.matchAll(SETUP_KEYS)].map((m) => m[2]!);
+    for (const v of values) {
+      for (const m of v.matchAll(/"([^"]+)"|'([^']+)'|`([^`]+)`|([^\s"'`,:\[\]{}]+)/g)) await consider(m[1] ?? m[2] ?? m[3] ?? m[4] ?? "", c.dir);
+    }
+  }
+  return [...found].sort();
+}
+
+/**
+ * Why a baseline run says the test command itself is broken, so that forking would only spend sessions
+ * on a suite that can never pass; null when it looks like a real suite (passing or failing).
+ */
+export function brokenTestCommand(run: RunOutcome, counts: Counts, testTimeoutMs: number): string | null {
+  const tail = run.output.trim().split("\n").slice(-4).join("\n");
+  if (run.timedOut) {
+    // A suite that printed its results and kept running is a watch mode or an open handle. One that printed
+    // nothing may be hanging on the very bug the forks are meant to fix, so that one still runs.
+    if (counts.passed === null && counts.failed === null) return null;
+    return `the test command printed its results but didn't exit within --test-timeout (${Math.round(testTimeoutMs / 1000)}s), so every fork's run would time out too. Use a command that exits on its own (for example \`vitest run\`, not watch mode).`;
+  }
+  if (run.code === 127 || run.code === 126) {
+    return `the test command couldn't run (exit ${run.code}: ${run.code === 127 ? "command not found" : "not executable"}). Check --test.\n${tail}`;
+  }
+  if (counts.passed === null && counts.failed === null && run.code !== 0 && /Missing script: |missing script:|ERR_PNPM_NO_SCRIPT|Command "[^"]+" not found|ENOENT[^\n]*package\.json/.test(run.output)) {
+    return `the test command names a script that doesn't exist. Check --test.\n${tail}`;
+  }
+  return null;
+}
 
 /** Git flags that keep repo-local config from running anything. */
 const GIT = "git -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -c color.ui=false";
@@ -129,6 +276,8 @@ export interface JudgeConfig {
   tmpDir: string;
   network: boolean;
   sandbox: boolean;
+  /** Folders the apply step and the test run may not read (the runs folder), as in SandboxSpec.denyRead. */
+  denyRead?: string[];
 }
 
 export interface Verdict extends Counts {
@@ -191,7 +340,7 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
     await writeFile(patchFile, patch);
     const applied = await runSandboxed(
       `${GIT} apply --whitespace=nowarn ${q(patchFile)}`,
-      { root: cfg.stateDir, tmp: cfg.tmpDir, network: false, gitWrite: true, disabled: !cfg.sandbox },
+      { root: cfg.stateDir, tmp: cfg.tmpDir, network: false, gitWrite: true, disabled: !cfg.sandbox, denyRead: cfg.denyRead },
       { timeoutMs: 60_000, maxOutput: 4000, signal },
     );
     if (applied.code !== 0) {
@@ -204,7 +353,7 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
   await cfg.forker.fork(cfg.stateDir, [testDir]);
   const run = await runSandboxed(
     cfg.testCmd,
-    { root: testDir, tmp: cfg.tmpDir, network: cfg.network, gitWrite: false, disabled: !cfg.sandbox },
+    { root: testDir, tmp: cfg.tmpDir, network: cfg.network, gitWrite: false, disabled: !cfg.sandbox, denyRead: cfg.denyRead },
     { timeoutMs: cfg.testTimeoutMs, maxOutput: cfg.maxOutput, signal },
   );
   await rm(testDir, { recursive: true, force: true });

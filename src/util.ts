@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { statfs } from "node:fs/promises";
+import { mkdir, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BRAND, HOME_ENV } from "./brand.js";
 
@@ -14,6 +14,35 @@ export function resolveHome(env: NodeJS.ProcessEnv = process.env, home = homedir
 
 export function appHome(): string {
   return resolveHome();
+}
+
+/** A path as people type it: the home folder as ~. */
+export function tildify(p: string, home = homedir()): string {
+  return p === home ? "~" : p.startsWith(home + sep) ? `~${p.slice(home.length)}` : p;
+}
+
+/** A run's id: its local start time to the second, e.g. 20261009-135746. */
+export function runId(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+/**
+ * Create a new run's folder and return its id. Two runs started in the same second get -2, -3, ...:
+ * mkdir without `recursive` fails if the folder exists, so two runs can never share one.
+ */
+export async function makeRunDir(runsDir: string, d = new Date()): Promise<string> {
+  const base = runId(d);
+  for (let i = 1; i < 1000; i++) {
+    const id = i === 1 ? base : `${base}-${i}`;
+    try {
+      await mkdir(join(runsDir, id));
+      return id;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+  }
+  throw new Error(`too many runs started at ${base}`);
 }
 
 /** Single-quote a string for /bin/sh. */

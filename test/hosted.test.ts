@@ -12,6 +12,7 @@ import {
   HOSTED_TOOLS,
   HostedClient,
   HostedError,
+  chargedSince,
   checkBaseUrl,
   formatCredits,
   hostedSettings,
@@ -140,6 +141,23 @@ function reply(
 }
 
 const apiError = (status: number, code: string, message: string): Reply => ({ status, body: { error: { message, type: code, code } } });
+
+/** Prices the test gateway charges, as /me reports them. */
+const PRICES = { inputPerMTokUsd: 0.6, outputPerMTokUsd: 2.4 };
+
+/**
+ * What the real gateway bills for a stream the client hung up on, worked out the way web/lib/server/gateway does it
+ * (estimateInputTokens over the body it received, Meter.estimate for the output, costMicroUsd rounding up), in µUSD.
+ */
+function gatewayHangUpMicro(body: Call["body"], outBytes: number, outChunks: number): number {
+  const input = 16 + body.messages.length * 8 + Math.ceil(Buffer.byteLength(JSON.stringify([body.messages, body.tools ?? null, body.tool_choice ?? null, body.response_format ?? null])) / 3);
+  const output = Math.max(outChunks, Math.ceil(outBytes / 3));
+  return Math.ceil((input * 600_000 + output * 2_400_000) / 1e6);
+}
+
+const meReply = (balanceMicroUsd: number): Reply => ({
+  body: { workspace: { id: "ws_test", label: null, createdAt: "2026-10-01T00:00:00.000Z" }, credits: { balanceMicroUsd, balanceUsd: balanceMicroUsd / 1e6 }, pricing: { ...PRICES, model: "forkbomb-hosted" } },
+});
 
 /** One chat.completion.chunk event, shaped like the pool's. */
 const chunk = (delta: object, finish: string | null = null) =>
@@ -418,6 +436,25 @@ describe("hosted engine: one fork", () => {
     expect(performance.now() - t0).toBeLessThan(3000);
   });
 
+  it("prices the turn it hangs up on the way the gateway bills it, and calls the cost unknown without prices (regression)", async () => {
+    const slow = (): Reply => ({ body: null, sse: [chunk({ role: "assistant", content: "" }), chunk({ content: "Let me look ✓" }), chunk({ tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "bash", arguments: '{"comm' } }] })], hang: true });
+    for (const pricing of [PRICES, undefined]) {
+      const gw = await gateway(slow);
+      const { cfg, ctl } = fork(gw.url);
+      cfg.client = new HostedClient({ baseUrl: gw.url, apiKey: KEY, retryBaseMs: 1, ...(pricing ? { pricing } : {}) });
+      setTimeout(() => ctl.abort(), 300);
+      const res = await runHostedFork(cfg);
+      expect(res.reason).toBe("killed");
+      if (pricing) {
+        // "Let me look ✓" is 15 bytes (✓ takes 3), "bash" + '{"comm' 10 more: 25 bytes over two deltas.
+        const micro = gatewayHangUpMicro(gw.chats()[0]!.body, 25, 2);
+        expect(res).toMatchObject({ costUsd: micro / 1e6, costEstimatedUsd: micro / 1e6 });
+      } else {
+        expect(res.costUsd).toBeNull();
+      }
+    }
+  });
+
   it("stops promptly when killed mid-stream, and the gateway sees the connection close at once (regression)", async () => {
     // The answer starts streaming, then the model keeps generating: a killed fork must hang up, not wait.
     const gw = await gateway(() => ({ body: null, sse: [chunk({ role: "assistant", content: "" }), chunk({ content: "Let me look" })], hang: true }));
@@ -488,10 +525,25 @@ describe("hosted engine: one fork", () => {
 describe("hosted engine: whole runs", () => {
   it("races hosted forks; the key never reaches a fork's shell, an event or the run log", async () => {
     process.env[HOSTED_KEY_ENV] = KEY;
+    // The gateway's books: what it settled, and what it holds for a stream until that stream settles.
+    let charged = 0;
+    let held = 0;
     const gw = await gateway((c) => {
+      if (c.path.endsWith("/me")) return meReply(5_000_000 - charged - held);
       const { turn, strategy } = turnOf(c);
       // The other fork's first answer streams a little, then the model keeps going until someone hangs up.
-      if (strategy !== "surgeon") return { body: null, sse: [chunk({ role: "assistant", content: "" }), chunk({ reasoning: "Thinking..." })], hang: true };
+      // When it does, the gateway bills the prompt and the 11 bytes of thought, a moment after the hang-up.
+      if (strategy !== "surgeon") {
+        held += 20_000;
+        void c.closed.then(() =>
+          setTimeout(() => {
+            held -= 20_000;
+            charged += gatewayHangUpMicro(c.body, "Thinking...".length, 1);
+          }, 300),
+        );
+        return { body: null, sse: [chunk({ role: "assistant", content: "" }), chunk({ reasoning: "Thinking..." })], hang: true };
+      }
+      charged += 1500; // each scripted reply settles at 0.0015
       const script = [
         () => reply({ tool_calls: [call("bash", { command: "env" })] }),
         () => reply({ tool_calls: [fixSum(), fixMul()] }),
@@ -511,10 +563,21 @@ describe("hosted engine: whole runs", () => {
     const start = bus.history.find((e) => e.type === "run_start");
     expect(start).toMatchObject({ engine: "hosted", model: `hosted (127.0.0.1:${gw.port})` });
     expect(bus.history.filter((e) => e.type === "kill").map((e) => e.type === "kill" && e.fork)).toEqual(["1.02"]);
-    expect(res.costUsd).toBeCloseTo(0.0045, 10);
     // Killing 1.02 hung up its stream, which is what tells the gateway to stop the GPU.
     const slow = gw.chats().filter((c) => turnOf(c).strategy !== "surgeon");
     expect(slow).toHaveLength(1);
+    // That hung-up turn was still billed, and the run says so (regression: it used to report only 0.0045).
+    const hungUp = gatewayHangUpMicro(slow[0]!.body, "Thinking...".length, 1);
+    expect(hungUp).toBeGreaterThan(500);
+    const killed = bus.history.find((e) => e.type === "fork_done" && e.fork === "1.02");
+    expect(killed).toMatchObject({ reason: "killed", costUsd: hungUp / 1e6, costEstimatedUsd: hungUp / 1e6 });
+    // Once the gateway settled it, the balance confirmed the figure, so the total is exact, not an estimate.
+    expect(res.costUsd).toBeCloseTo((4500 + hungUp) / 1e6, 10);
+    expect(res.costUsd).toBeCloseTo(charged / 1e6, 10);
+    expect(res.costApprox).toBe(false);
+    const end = bus.history.find((e) => e.type === "run_end");
+    expect(end).toMatchObject({ costUsd: res.costUsd });
+    expect(end && "costApprox" in end).toBe(false);
     const open = new Promise((done) => setTimeout(() => done("still open"), 2000));
     expect(await Promise.race([slow[0]!.closed, open])).toEqual(expect.any(Number));
 
@@ -853,6 +916,26 @@ describe("hosted client: streaming", () => {
     const turn = await client().chat(REQ, new AbortController().signal);
     expect(turn.completion.choices[0]!.message.content).toBe("ok");
     expect(turn).toMatchObject({ costUsd: 0.0015, remainingUsd: null });
+  });
+});
+
+describe("hosted run cost", () => {
+  const balances = (...seq: number[]) => {
+    let i = 0;
+    return { label: "hosted (test)", topUpUrl: "", chat: () => Promise.reject(new Error("unused")), balance: async () => seq[Math.min(i++, seq.length - 1)]! };
+  };
+
+  it("waits for the hung-up turns to settle, then takes the balance drop as the charge", async () => {
+    // 4500 settled + 3000 estimated. First read: a 20,000 hold still open. Second: settled at 3,012.
+    const client = balances(5_000_000 - 4500 - 20_000, 5_000_000 - 4500 - 3012);
+    expect(await chargedSince(client, 5_000_000, { usd: 0.0075, estimatedUsd: 0.003 }, { everyMs: 5 })).toBeCloseTo(0.007512, 10);
+  });
+
+  it("keeps the estimate when the balance doesn't add up: a top-up landed, or another client spent on the key", async () => {
+    expect(await chargedSince(balances(5_100_000), 5_000_000, { usd: 0.0075, estimatedUsd: 0.003 }, { everyMs: 5 })).toBeNull();
+    expect(await chargedSince(balances(4_000_000), 5_000_000, { usd: 0.0075, estimatedUsd: 0.003 }, { everyMs: 5, waitMs: 40 })).toBeNull();
+    const broken = { ...balances(0), balance: () => Promise.reject(new Error("down")) };
+    expect(await chargedSince(broken, 5_000_000, { usd: 0.0075, estimatedUsd: 0.003 }, { everyMs: 5 })).toBeNull();
   });
 });
 
