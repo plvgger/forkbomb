@@ -3,9 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Ops scripts: devnet end-to-end burn test against the real server code in ../web/lib/server.",
+  "description": "Ops scripts against the real server code in ../web/lib/server: devnet and browser burn end-to-end tests, and the review-burn release tool.",
   "scripts": {
     "e2e:devnet": "tsx devnet-burn-e2e.ts",
+    "e2e:dapp": "(test -d e2e/node_modules/puppeteer-core || npm --prefix e2e ci --no-audit --no-fund) && tsc -p e2e --noEmit && tsx e2e/dapp-burn-e2e.ts",
+    "review": "tsx review-burns.ts",
+    "test": "tsx --test review-burns.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

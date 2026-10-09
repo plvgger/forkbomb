@@ -1,0 +1,10 @@
+{
+  "name": "forkbomb-ops-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser end-to-end for the /app burn flow: real dApp UI in headless Chrome, a scripted Wallet Standard wallet, a local Solana validator. Run from ops/: npm run e2e:dapp",
+  "dependencies": {
+    "puppeteer-core": "^25.12.0"
+  }
+}
