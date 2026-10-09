@@ -1,5 +1,9 @@
 // Human copy for every outcome of POST /api/burns/verify (codes from lib/server/burns.ts), and whether
 // the poller should keep trying. Finalization takes ~15-40 s, so "not yet" codes retry until a deadline.
+// Also the copy for a wallet that refused to send the burn.
+
+import { fmtMicroUsd, fmtPrice, fmtUsd } from "@/app/burns/format";
+import type { BurnRecord } from "./api";
 
 export const VERIFY_POLL_MS = 4_000;
 /** Give up polling after this long; the burn is still on chain and can be re-checked by signature. */
@@ -51,4 +55,29 @@ export function verifyCopy(code: string, ticker: string): VerifyCopy {
 /** 5xx answers without a known code are worth retrying too. */
 export function shouldRetry(code: string, status: number): boolean {
   return verifyCopy(code, "").retry || (status >= 500 && code !== "not_configured");
+}
+
+/** The sentence under a verified burn's badge. A replay of a credited burn says nothing new was added. */
+export function doneCopy(r: BurnRecord): string {
+  if (r.status === "review") {
+    return `Burned ${r.amountUi} worth ${fmtUsd(r.usdValue)}. Over the per-burn limit, so a human reviews it before it's credited.`;
+  }
+  if (r.status === "already_credited") {
+    return `This burn of ${r.amountUi} was already credited (${fmtMicroUsd(r.creditMicroUsd)} at ${fmtPrice(r.priceUsd)}). Nothing new was added.`;
+  }
+  return `Burned ${r.amountUi} at ${fmtPrice(r.priceUsd)}: ${fmtMicroUsd(r.creditMicroUsd)} credit added.`;
+}
+
+export const SHORT_BALANCE = "Your wallet holds less than this now. Refresh and try a smaller amount.";
+const SHORT_SOL = "This wallet needs a little SOL (about 0.00001) to pay the network fee. Add some and try again.";
+
+/**
+ * Copy for a send the wallet didn't complete (not a user rejection). Simulation errors arrive raw; the two a burn
+ * hits in practice get plain words: instruction 0 is the burn, so its "custom program error: 0x1" is the token
+ * program's InsufficientFunds. Anything else is shown as the wallet said it.
+ */
+export function walletSendCopy(message: string): string {
+  if (/insufficient (funds for (fee|rent)|lamports)|no record of a prior credit/i.test(message)) return SHORT_SOL;
+  if (/instruction 0: custom program error: 0x1\b|insufficient funds/i.test(message)) return SHORT_BALANCE;
+  return message || "Unknown error.";
 }

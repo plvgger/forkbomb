@@ -36,7 +36,13 @@ export type Usage = {
 
 export type Created = { workspace: Workspace; apiKey: string; burnMemo: string };
 
-export type Price = { priceUsd: string | null; twapUsd: string | null; sampledAt: string | null };
+export type Price = {
+  priceUsd: string | null;
+  twapUsd: string | null;
+  sampledAt: string | null;
+  /** Samples in the TWAP window (the last 15 minutes). */
+  windowSamples: number;
+};
 
 export type BurnRecord = {
   signature: string;
@@ -93,13 +99,15 @@ export const verifyBurn = (signature: string) =>
   call<{ burn: BurnRecord }>("/api/burns/verify", post({ signature })).then((r) => r.burn);
 
 export async function getPrice(): Promise<Price> {
-  const body = await call<{ latest?: { priceUsd?: string; ts?: string } | null; twap?: { priceUsd?: string } | null }>(
-    "/api/price",
-  );
+  const body = await call<{
+    latest?: { priceUsd?: string; ts?: string } | null;
+    twap?: { priceUsd?: string; samples?: number } | null;
+  }>("/api/price");
   return {
     priceUsd: body.latest?.priceUsd ?? null,
     twapUsd: body.twap?.priceUsd ?? null,
     sampledAt: body.latest?.ts ?? null,
+    windowSamples: typeof body.twap?.samples === "number" ? body.twap.samples : 0,
   };
 }
 

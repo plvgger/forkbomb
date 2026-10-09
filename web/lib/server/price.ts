@@ -19,6 +19,13 @@ export const BURN_WINDOW_AFTER_MS = 5 * 60_000;
 export const RECENT_BURN_MS = 10 * 60_000;
 /** The latest sample is only used for a recent burn if it is at most this old at burn time. */
 const LATEST_SAMPLE_MAX_AGE_MS = 30 * 60_000;
+/**
+ * blockTime is whole seconds (floored) and runs a second or two behind wall clock, while a sample's ts is exact
+ * and taken before its quote is fetched. So the sample a burn panel triggers just before the user sends can carry
+ * a ts slightly after the burn's blockTime. When no sample precedes the burn, the first one at most this long
+ * after blockTime stands in as the anchor.
+ */
+export const ANCHOR_SKEW_MS = 5_000;
 
 export type Source = "jupiter" | "dexscreener";
 export type Quote = { priceAtto: bigint; source: Source };
@@ -202,7 +209,8 @@ export type BurnPrice =
  * The USD price a burn at blockTime is credited at. Never to the burner's advantage: every price is anchored
  * to the last sample at/before blockTime (at most 30 minutes old), and anything observed after the burn (later
  * samples, the window TWAP, a live quote) can only push it down, never set it.
- * - No pre-burn anchor: rejected (too_old_for_price). A price fetched later can't stand in for it.
+ * - No pre-burn anchor: the first sample at most ANCHOR_SKEW_MS after blockTime anchors instead (clock skew,
+ *   see there). Otherwise rejected (too_old_for_price): a price fetched later can't stand in for it.
  * - 2+ samples in [blockTime-15m, blockTime+5m]: MIN(anchor, window TWAP, nearest sample after blockTime),
  *   plus a live quote if the burn is under 10 minutes old and no sample after it exists yet.
  * - Fewer: rejected (too_old_for_price) unless the burn is under 10 minutes old; then MIN(anchor, live quote).
@@ -214,8 +222,12 @@ export async function burnPrice(
   liveQuote: (mint: string, prev?: bigint | null) => Promise<Quote> = fetchQuote,
 ): Promise<BurnPrice> {
   const bt = blockTime.getTime();
-  const anchor = await latestSample(mint, blockTime);
-  if (!anchor || bt - anchor.ts.getTime() > LATEST_SAMPLE_MAX_AGE_MS) {
+  const before = await latestSample(mint, blockTime);
+  const anchor =
+    before && bt - before.ts.getTime() <= LATEST_SAMPLE_MAX_AGE_MS
+      ? before
+      : ((await samplesBetween(mint, blockTime, new Date(bt + ANCHOR_SKEW_MS)))[0] ?? null);
+  if (!anchor) {
     return {
       ok: false,
       code: "too_old_for_price",

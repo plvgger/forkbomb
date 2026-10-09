@@ -8,9 +8,13 @@ import {
   parseUiAmount,
   PRICE_FRESH_MS,
   priceIsFresh,
+  SAMPLE_SETTLE_MS,
+  sampleSettleLeftMs,
   U64_MAX,
 } from "../app/app/_lib/amount";
-import { shouldRetry, verifyCopy } from "../app/app/_lib/burnErrors";
+import type { BurnRecord } from "../app/app/_lib/api";
+import { doneCopy, SHORT_BALANCE, shouldRetry, verifyCopy, walletSendCopy } from "../app/app/_lib/burnErrors";
+import { ANCHOR_SKEW_MS } from "../lib/server/price";
 import { explorerTx, maskKey, setupSnippet } from "../app/app/_lib/snippet";
 import { valueBurn, type BurnErrorCode } from "../lib/server/burns";
 
@@ -108,6 +112,57 @@ describe("credit estimate", () => {
     expect(priceIsFresh(new Date(now - 60_000).toISOString(), now)).toBe(true);
     expect(priceIsFresh(new Date(now - PRICE_FRESH_MS - 1).toISOString(), now)).toBe(false);
     expect(priceIsFresh(null, now)).toBe(false);
+  });
+});
+
+describe("price sample settling", () => {
+  const now = Date.parse("2026-10-06T12:00:30Z");
+  const iso = (t: number) => new Date(t).toISOString();
+
+  it("holds the burn a few seconds after the panel's read took the only recent sample", () => {
+    expect(SAMPLE_SETTLE_MS).toBeGreaterThan(ANCHOR_SKEW_MS);
+    expect(sampleSettleLeftMs(iso(now - 1_000), 1, now, now)).toBe(SAMPLE_SETTLE_MS - 1_000);
+    expect(sampleSettleLeftMs(iso(now - 1_000), 1, now, now + 4_000)).toBe(SAMPLE_SETTLE_MS - 5_000);
+    expect(sampleSettleLeftMs(iso(now - SAMPLE_SETTLE_MS), 1, now, now)).toBe(0);
+  });
+
+  it("never waits while an older sample in the window can anchor the burn", () => {
+    expect(sampleSettleLeftMs(iso(now - 1_000), 2, now, now)).toBe(0);
+  });
+
+  it("caps the wait when the browser clock is behind the server's", () => {
+    expect(sampleSettleLeftMs(iso(now + 5 * 60_000), 1, now, now)).toBe(SAMPLE_SETTLE_MS);
+    expect(sampleSettleLeftMs(iso(now + 5 * 60_000), 1, now, now + SAMPLE_SETTLE_MS)).toBe(0);
+    expect(sampleSettleLeftMs(null, 0, now, now)).toBe(0);
+  });
+});
+
+describe("burn result copy", () => {
+  const rec = (status: BurnRecord["status"]): BurnRecord => ({
+    signature: "sig",
+    amountUi: "100",
+    usdValue: "1.23456",
+    priceUsd: "0.01235",
+    creditMicroUsd: 1_234_560,
+    status,
+  });
+
+  it("says a replay added nothing new", () => {
+    expect(doneCopy(rec("credited"))).toBe("Burned 100 at $0.01235: $1.23 credit added.");
+    const replay = doneCopy(rec("already_credited"));
+    expect(replay).toMatch(/already credited \(\$1\.23 at \$0\.01235\)\. Nothing new was added\./);
+    expect(replay).not.toMatch(/credit added/);
+    expect(doneCopy(rec("review"))).toMatch(/a human reviews it/);
+  });
+
+  it("puts a burn over the wallet's balance in plain words", () => {
+    const sim =
+      "Simulation failed. Message: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1.";
+    expect(walletSendCopy(sim)).toBe(SHORT_BALANCE);
+    expect(walletSendCopy("Error processing Instruction 0: custom program error: 0x10")).not.toBe(SHORT_BALANCE);
+    expect(walletSendCopy("Attempt to debit an account but found no record of a prior credit.")).toMatch(/SOL/);
+    expect(walletSendCopy("Transaction results in an account (0) with insufficient funds for rent")).toMatch(/SOL/);
+    expect(walletSendCopy("Blockhash not found")).toBe("Blockhash not found");
   });
 });
 

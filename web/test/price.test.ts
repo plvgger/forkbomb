@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../lib/server/db";
 import { formatScaled, parseDecimal, PRICE_SCALE } from "../lib/server/decimal";
-import { burnPrice, ensureFreshSample, fetchQuote, latestSample, ON_DEMAND_MAX_AGE_MS, priceSummary, PriceError, samplePrice, timeWeightedAverage } from "../lib/server/price";
+import { ANCHOR_SKEW_MS, burnPrice, ensureFreshSample, fetchQuote, latestSample, ON_DEMAND_MAX_AGE_MS, priceSummary, PriceError, samplePrice, timeWeightedAverage } from "../lib/server/price";
 import { MINT } from "./fixtures/transactions";
 import { fakeChain, freshDb, MIN, seedSamples, useTokenEnv, type FakeChain } from "./helpers";
 
@@ -134,6 +134,26 @@ describe("burnPrice", () => {
     const r = await burnPrice(bt, later, MINT);
     expect(r).toMatchObject({ ok: true, method: "twap", samples: 2 });
     expect(at(r)).toBe("0.001");
+  });
+
+  // Regression: blockTime is floored to whole seconds and lags wall clock, so the only sample, taken on demand just
+  // before the user sent, looked like it came after the burn: tokens burned, permanent too_old_for_price.
+  it("anchors on a sample taken moments after blockTime when none precedes the burn", async () => {
+    chain.jupiter = 0.002;
+    const sampledAt = new Date("2026-10-06T12:00:02.356Z");
+    await ensureFreshSample(sampledAt); // the burn panel's first /api/price read takes the only sample
+    const verifyAt = new Date(sampledAt.getTime() + 30_000);
+    for (const lag of [356, 1_356, ANCHOR_SKEW_MS]) {
+      const r = await burnPrice(new Date(sampledAt.getTime() - lag), verifyAt, MINT);
+      expect(r, `blockTime ${lag} ms before the sample`).toMatchObject({ ok: true, method: "recent" });
+      expect(at(r)).toBe("0.002");
+    }
+    expect(at(await burnPrice(new Date(sampledAt.getTime() - ANCHOR_SKEW_MS - 1), verifyAt, MINT))).toBe("too_old_for_price");
+  });
+
+  it("keeps the pre-burn anchor when one exists, over a sample moments after blockTime", async () => {
+    await seedSamples(db, bt, [[-MIN, "0.001"], [3_000, "0.003"]]);
+    expect(at(await burnPrice(bt, new Date(bt.getTime() + 2 * MIN), MINT))).toBe("0.001");
   });
 
   it("lets later data push the price down, never up", async () => {

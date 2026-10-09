@@ -15,9 +15,18 @@ import {
   parseScaled,
   parseUiAmount,
   priceIsFresh,
+  sampleSettleLeftMs,
 } from "../_lib/amount";
 import { ApiFailure, type BurnRecord, getPrice, type Price, type TokenInfo, verifyBurn } from "../_lib/api";
-import { shouldRetry, VERIFY_DEADLINE_MS, VERIFY_POLL_MS, verifyCopy } from "../_lib/burnErrors";
+import {
+  doneCopy,
+  SHORT_BALANCE,
+  shouldRetry,
+  VERIFY_DEADLINE_MS,
+  VERIFY_POLL_MS,
+  verifyCopy,
+  walletSendCopy,
+} from "../_lib/burnErrors";
 import { associatedTokenAccount, buildBurnTransaction } from "../_lib/burnTx";
 import { latestBlockhash, solBalanceLamports, tokenBalances } from "../_lib/rpc";
 import { dropPending, loadPending, savePending } from "../_lib/session";
@@ -89,6 +98,7 @@ export function BurnPanel({
   const [burn, setBurn] = useState<Burn>({ kind: "idle" });
   const [manualSig, setManualSig] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  const [priceReadAt, setPriceReadAt] = useState(0);
   const poll = useRef<AbortController | null>(null);
 
   // ---- wallets ----
@@ -125,9 +135,11 @@ export function BurnPanel({
     const read = () =>
       getPrice().then(
         (p) => {
+          const t = Date.now();
           setPrice(p);
           setPriceError(false);
-          setNow(Date.now());
+          setNow(t);
+          setPriceReadAt(t);
         },
         () => setPriceError(true),
       );
@@ -206,12 +218,32 @@ export function BurnPanel({
   const lowSol = balances.kind === "ok" && balances.sol < MIN_FEE_LAMPORTS;
   const burnPrice = price ? lowerPrice(price.priceUsd, price.twapUsd) : null;
   const fresh = !!price && priceIsFresh(price.sampledAt, now);
+  const settleLeft = price ? sampleSettleLeftMs(price.sampledAt, price.windowSamples, priceReadAt, now) : 0;
   const estimate =
     parsed?.ok && burnPrice ? estimateCreditMicroUsd(parsed.raw, decimals, burnPrice, token?.creditMultiplier ?? "1") : null;
+  /** Credit floors to micro-dollars: a dust burn would destroy tokens for $0. */
+  const tooSmall = estimate === 0;
   const capMicro = token ? parseScaled(token.maxCreditPerBurnUsd, 6) : null;
   const overCap = estimate !== null && capMicro !== null && BigInt(estimate) > capMicro;
   const busy = burn.kind === "building" || burn.kind === "signing" || burn.kind === "verifying";
-  const canBurn = open && !!conn && !!parsed?.ok && !overBalance && !lowSol && fresh && !busy && balances.kind === "ok";
+  const canBurn =
+    open &&
+    !!conn &&
+    !!parsed?.ok &&
+    !overBalance &&
+    !tooSmall &&
+    !lowSol &&
+    fresh &&
+    settleLeft === 0 &&
+    !busy &&
+    balances.kind === "ok";
+
+  // Re-render once a just-taken price sample has settled (see sampleSettleLeftMs).
+  useEffect(() => {
+    if (settleLeft <= 0) return;
+    const id = window.setTimeout(() => setNow(Date.now()), settleLeft);
+    return () => window.clearTimeout(id);
+  }, [settleLeft]);
 
   async function connect(wallet: Wallet) {
     setConnectError(null);
@@ -242,6 +274,16 @@ export function BurnPanel({
     setBurn({ kind: "building" });
     let tx: Uint8Array;
     try {
+      // The balance on screen may be stale (spent elsewhere since): re-read it so the wallet isn't asked to burn
+      // more than it holds, which only fails in simulation with a raw program error.
+      const owner = conn.account.address;
+      const ata = await associatedTokenAccount(owner, token.mint!, token.program!);
+      const held = await tokenBalances(owner, token.mint!, ata);
+      if (parsed.raw > held.ata) {
+        setBalances((b) => (b.kind === "ok" ? { ...b, ...held } : b));
+        setBurn({ kind: "failed", signature: null, title: "Not enough tokens", body: `${SHORT_BALANCE} Nothing was sent.`, canRetry: false });
+        return;
+      }
       tx = await buildBurnTransaction(
         {
           owner: conn.account.address,
@@ -267,7 +309,13 @@ export function BurnPanel({
       setBurn(
         isUserRejection(err)
           ? { kind: "failed", signature: null, title: "Cancelled", body: "You declined in your wallet. Nothing was burned.", canRetry: false }
-          : { kind: "failed", signature: null, title: "The wallet didn't send it", body: `${errText(err)} Nothing was burned.`, canRetry: false },
+          : {
+              kind: "failed",
+              signature: null,
+              title: "The wallet didn't send it",
+              body: `${walletSendCopy(errText(err))} Nothing was burned.`,
+              canRetry: false,
+            },
       );
       return;
     }
@@ -432,6 +480,9 @@ export function BurnPanel({
             </label>
             {amount.trim() !== "" && parsed && !parsed.ok && <p className={s.error}>{parsed.error}</p>}
             {overBalance && <p className={s.error}>That&apos;s more than this wallet holds.</p>}
+            {tooSmall && !overBalance && (
+              <p className={s.error}>Too small to earn credit: this amount is worth less than $0.000001 at today&apos;s price.</p>
+            )}
 
             <div className={s.preview} aria-live="polite">
               {!open ? (
@@ -452,6 +503,7 @@ export function BurnPanel({
                     at {fmtPrice(burnPrice)} per token now. The final value uses the burn-time price, which can only be
                     lower.
                   </span>
+                  {settleLeft > 0 && <span>Price sampled just now. Burning unlocks in a few seconds.</span>}
                 </>
               )}
             </div>
@@ -550,11 +602,7 @@ function BurnStatus({
             {r.status === "already_credited" ? "already credited" : "credited"}
           </Badge>
         )}
-        <p>
-          {r.status === "review"
-            ? `Burned ${r.amountUi} worth ${fmtUsd(r.usdValue)}. Over the per-burn limit, so a human reviews it before it's credited.`
-            : `Burned ${r.amountUi} at ${fmtPrice(r.priceUsd)}: ${fmtMicroUsd(r.creditMicroUsd)} credit added.`}
-        </p>
+        <p>{doneCopy(r)}</p>
         {link}
       </div>
     );

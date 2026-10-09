@@ -85,3 +85,22 @@ export function priceIsFresh(sampledAt: string | null, now: number): boolean {
   const t = sampledAt ? Date.parse(sampledAt) : NaN;
   return Number.isFinite(t) && now - t <= PRICE_FRESH_MS;
 }
+
+/**
+ * When the price read that enabled the panel just took the only recent sample, wait this long before allowing a
+ * burn. The server already accepts a sample a few seconds after a burn's blockTime as its anchor (blockTime is
+ * whole seconds and lags wall clock: ANCHOR_SKEW_MS in lib/server/price.ts); this keeps a fast burn well clear of
+ * that edge. Not needed while the window holds an older sample, which anchors the burn on its own.
+ */
+export const SAMPLE_SETTLE_MS = 10_000;
+
+/**
+ * Milliseconds until a burn may be sent on this price read, 0 when it may go now. Client clock: a sample stamped
+ * after readAt (a clock behind the server's) counts from readAt, so the wait never exceeds SAMPLE_SETTLE_MS.
+ */
+export function sampleSettleLeftMs(sampledAt: string | null, windowSamples: number, readAt: number, now: number): number {
+  if (windowSamples >= 2) return 0;
+  const t = sampledAt ? Date.parse(sampledAt) : NaN;
+  if (!Number.isFinite(t)) return 0; // no sample at all: priceIsFresh already blocks the burn
+  return Math.max(0, SAMPLE_SETTLE_MS - (now - Math.min(t, readAt)));
+}
