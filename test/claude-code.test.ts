@@ -163,7 +163,8 @@ describe("claude-code engine", () => {
   it("runs a whole race on the Claude Code engine", async () => {
     const { work, bin } = setup({
       surgeon: [{ write: { path: "math.js", content: "export const sum = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n" } }, { text: "Fixed both." }],
-      "*": [{ sleep: 8000 }, { text: "slow" }],
+      // Still running when the winner's verdict lands, however long judging takes: the race kills them first.
+      "*": [{ sleep: 25_000 }, { text: "slow" }],
     });
     const repo = join(work, "repo");
     writeTree(repo, {
