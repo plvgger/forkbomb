@@ -288,8 +288,9 @@ export const DOCTOR_CHECKS: {
   },
   {
     check: "OpenAI-compatible server",
-    verifies: "Optional, only for --engine openai. If OPENAI_BASE_URL is set, asks the server for its model list and says whether OPENAI_API_KEY is set.",
-    fix: "Start the server, or fix OPENAI_BASE_URL or OPENAI_API_KEY",
+    verifies:
+      "Optional, only for --engine openai. If OPENAI_BASE_URL is set, asks the server for its model list and says which key it sends. Only a rejected key fails; a URL the engine can't use is a note.",
+    fix: "Start the server, or fix OPENAI_BASE_URL or FORKBOMB_OPENAI_API_KEY",
   },
   {
     check: "Isolation canary",

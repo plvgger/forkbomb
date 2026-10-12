@@ -281,14 +281,13 @@ export default function DocsPage() {
               <CodeBlock
                 title={`${HOME}/.env (api, hosted and openai engines)`}
                 lang="env"
-                code={`ANTHROPIC_API_KEY=...        # --engine api\n${KEY_ENV}=${KEY_PREFIX}...   # --engine hosted\nOPENAI_BASE_URL=http://localhost:11434/v1   # --engine openai\nOPENAI_API_KEY=...           # --engine openai, if the server needs one`}
+                code={`ANTHROPIC_API_KEY=...        # --engine api\n${KEY_ENV}=${KEY_PREFIX}...   # --engine hosted\nOPENAI_BASE_URL=http://localhost:11434/v1   # --engine openai\nFORKBOMB_OPENAI_API_KEY=...  # --engine openai, if the server needs one`}
                 ariaLabel="Key file"
               />
               <Callout tone="info" title="Keys stay on your machine">
                 <p>
-                  The Anthropic key goes only to Anthropic, the hosted key only to the hosted gateway, and{" "}
-                  <code>OPENAI_API_KEY</code> only to the openai engine&apos;s server. Forks run with a clean environment
-                  and never see any of them.
+                  The Anthropic key goes only to Anthropic, the hosted key only to the hosted gateway, and the openai
+                  engine&apos;s key only to its server. Forks run with a clean environment and never see any of them.
                 </p>
               </Callout>
             </DocSection>
@@ -479,7 +478,7 @@ export default function DocsPage() {
                     <code key="c">ANTHROPIC_API_KEY</code>,
                     <code key="d">{KEY_ENV}</code>,
                     <span key="e">
-                      <code>OPENAI_API_KEY</code>, if the server needs one
+                      <code>FORKBOMB_OPENAI_API_KEY</code>, if the server needs one
                     </span>,
                   ],
                   [
@@ -564,17 +563,34 @@ export default function DocsPage() {
                 The same tool loop and the same sandbox as <code>api</code>, on any OpenAI-compatible server you name:
                 Ollama, LM Studio, vLLM, llama.cpp or OpenRouter. Point <code>--base-url</code> (or{" "}
                 <code>OPENAI_BASE_URL</code>) at its API root, usually ending in <code>/v1</code>, and pass{" "}
-                <code>--model</code>, which this engine requires. <code>OPENAI_API_KEY</code> is sent if it is set, to
-                that server only. The URL must be <code>https</code>, or plain <code>http</code> to localhost.
+                <code>--model</code>, which this engine requires. The URL must be <code>https</code>, or plain{" "}
+                <code>http</code> to localhost.
               </p>
               <ul>
                 <li>
-                  Before any fork starts, Forkbomb asks the server for its model list and stops if the server can&apos;t
-                  be reached, rejects the key or doesn&apos;t list the model.
+                  If the server needs a key, put it in <code>FORKBOMB_OPENAI_API_KEY</code>; it goes to that server
+                  only. <code>OPENAI_API_KEY</code> is used only where an OpenAI SDK would send it: to the server{" "}
+                  <code>OPENAI_BASE_URL</code> names when both are set in the same place (both exported, or both in{" "}
+                  <code>{HOME}/.env</code>), or to <code>api.openai.com</code>. A key you export for other tools never
+                  goes to a server you name with <code>--base-url</code>. Each run says which key it sends, from where,
+                  to which host.
                 </li>
                 <li>
-                  Forks need a model that can call tools. A server or model without tool calling stops the run at the
-                  first request, with what to change.
+                  Before any fork starts, Forkbomb asks the server for its model list and stops if the server can&apos;t
+                  be reached, rejects the key or doesn&apos;t list the model. Any other error there only means the model
+                  wasn&apos;t checked: the run says so and starts.
+                </li>
+                <li>
+                  Forks need a model that can call tools. A server that turns tool requests down (Ollama for a model
+                  without tool support, vLLM without <code>--enable-auto-tool-choice</code>, llama.cpp without{" "}
+                  <code>--jinja</code>, OpenRouter with no endpoint that supports tools) stops the run at the first
+                  request, with what to change. A server that ignores the tools gets answers in plain
+                  text; the run warns when no fork in a round called a tool.
+                </li>
+                <li>
+                  When the server runs on this machine, forks and the judge can&apos;t connect to its port, so a fork
+                  can&apos;t drive it. Other services on loopback stay reachable to forks, as on <code>api</code> and{" "}
+                  <code>hosted</code>.
                 </li>
                 <li>
                   Forkbomb can&apos;t see what the server bills, so a run&apos;s cost is reported as unknown. With a
@@ -590,7 +606,7 @@ export default function DocsPage() {
               <CodeBlock
                 title="OpenRouter"
                 lang="sh"
-                code={`$ export OPENAI_API_KEY=sk-or-...\n$ ${BIN} run ./my-repo --task "fix the failing tests" --test "npm test" \\\n    --engine openai --base-url https://openrouter.ai/api/v1 --model qwen/qwen3-coder`}
+                code={`$ export FORKBOMB_OPENAI_API_KEY=sk-or-...\n$ ${BIN} run ./my-repo --task "fix the failing tests" --test "npm test" \\\n    --engine openai --base-url https://openrouter.ai/api/v1 --model qwen/qwen3-coder`}
                 ariaLabel="Race on an OpenRouter model"
               />
               <p>
@@ -1611,7 +1627,8 @@ export default function DocsPage() {
                   <p>
                     Forks work through two tools, so the model must support tool calling. On Ollama, pick a model with
                     the &quot;tools&quot; tag. On vLLM, start the server with <code>--enable-auto-tool-choice</code> and
-                    a <code>--tool-call-parser</code>; on llama.cpp, with <code>--jinja</code>.
+                    a <code>--tool-call-parser</code>; on llama.cpp, with <code>--jinja</code>. A server that ignores the
+                    tools instead gets answers in plain text, and the run warns that no fork called a tool.
                   </p>
                 </Issue>
                 <Issue
