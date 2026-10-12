@@ -69,6 +69,8 @@ export interface ChatClient {
   chat(req: ChatRequest, signal: AbortSignal, watch?: StreamWatch): Promise<ChatTurn>;
   /** Scrub the key from a string before it reaches an event or a log line. */
   redact?(s: string): string;
+  /** The server's port when it runs on this machine (loopback), so forks and the judge can be kept off it. */
+  readonly loopbackPort?: number | null;
 }
 
 /** Two function tools that map one-to-one onto Workspace.bash and Workspace.edit. */
@@ -198,6 +200,7 @@ export abstract class ChatHttpClient implements ChatClient {
   readonly baseUrl: string;
   /** host[:port], for labels and messages. */
   readonly host: string;
+  readonly loopbackPort: number | null;
   abstract readonly label: string;
   /** The server as messages name it ("the hosted gateway"). */
   protected abstract readonly server: string;
@@ -213,6 +216,7 @@ export abstract class ChatHttpClient implements ChatClient {
     const u = checkBaseUrl(o.baseUrl, o.urlSetting);
     this.baseUrl = u.href.replace(/\/+$/, "");
     this.host = u.host;
+    this.loopbackPort = LOOPBACK.has(u.hostname) ? Number(u.port || (u.protocol === "https:" ? 443 : 80)) : null;
     this.#key = o.apiKey || null;
     this.maxRetries = o.maxRetries ?? 4;
     this.retryBaseMs = o.retryBaseMs ?? 1000;
@@ -232,8 +236,11 @@ export abstract class ChatHttpClient implements ChatClient {
     return this.#key ? s.split(this.#key).join("[redacted]") : s;
   }
 
-  /** What the user reads for an error answer: an HTTP status, or the mid-stream error event that stands for one. */
-  protected abstract toError(status: number, err: ServerError, retries: number, transient: boolean): ChatError;
+  /**
+   * What the user reads for an error answer: an HTTP status, or the mid-stream error event that stands for one
+   * (`inStream`), which can carry what the model had written so far.
+   */
+  protected abstract toError(status: number, err: ServerError, retries: number, transient: boolean, inStream: boolean): ChatError;
 
   /** Whether an error answer is worth sending again (429, a 5xx). */
   protected abstract retryable(status: number, headers: Headers, err: ServerError): boolean;
@@ -320,7 +327,7 @@ export abstract class ChatHttpClient implements ChatClient {
             await this.sleep(this.backoff(attempt), signal);
             continue;
           }
-          const err = this.error(e.status, e.failure, attempt, true);
+          const err = this.error(e.status, e.failure, attempt, true, true);
           err.costUsd = 0;
           throw err;
         }
@@ -332,7 +339,7 @@ export abstract class ChatHttpClient implements ChatClient {
         await this.sleep(retryAfterMs(res.headers) ?? this.backoff(attempt), signal);
         continue;
       }
-      throw this.error(res.status, err, attempt, retry);
+      throw this.error(res.status, err, attempt, retry, false);
     }
   }
 
@@ -427,7 +434,7 @@ export abstract class ChatHttpClient implements ChatClient {
       // (see refunded()) and go again; anything the model produced was billed, and is never sent again.
       const status = statusOf(failure);
       if (this.refunded(status, chat)) throw new Refunded(status, failure);
-      const err = this.error(status, failure, 0, true);
+      const err = this.error(status, failure, 0, true, true);
       err.costUsd = chat.costUsd;
       throw err;
     }
@@ -453,8 +460,8 @@ export abstract class ChatHttpClient implements ChatClient {
   }
 
   /** toError, plus the server's own words for callers that need to tell one error from another. */
-  private error(status: number, err: ServerError, retries: number, transient: boolean): ChatError {
-    const e = this.toError(status, err, retries, transient);
+  private error(status: number, err: ServerError, retries: number, transient: boolean, inStream: boolean): ChatError {
+    const e = this.toError(status, err, retries, transient, inStream);
     e.serverMessage = this.redact(`${err.code} ${err.message}`.trim());
     return e;
   }

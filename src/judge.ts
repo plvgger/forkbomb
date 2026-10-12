@@ -299,6 +299,8 @@ export interface JudgeConfig {
   /** Scratch dir for the patch file and the test run's temp files. */
   tmpDir: string;
   network: boolean;
+  /** Ports the apply step and the test run may not connect to (a model server on this machine), as in SandboxSpec.denyPorts. */
+  denyPorts?: number[];
   sandbox: boolean;
   /** Folders the apply step and the test run may not read (the runs folder), as in SandboxSpec.denyRead. */
   denyRead?: string[];
@@ -364,7 +366,7 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
     await writeFile(patchFile, patch);
     const applied = await runSandboxed(
       `${GIT} apply --whitespace=nowarn ${q(patchFile)}`,
-      { root: cfg.stateDir, tmp: cfg.tmpDir, network: false, gitWrite: true, disabled: !cfg.sandbox, denyRead: cfg.denyRead },
+      { root: cfg.stateDir, tmp: cfg.tmpDir, network: false, gitWrite: true, disabled: !cfg.sandbox, denyRead: cfg.denyRead, denyPorts: cfg.denyPorts },
       { timeoutMs: 60_000, maxOutput: 4000, signal },
     );
     if (applied.code !== 0) {
@@ -377,7 +379,7 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
   await cfg.forker.fork(cfg.stateDir, [testDir]);
   const run = await runSandboxed(
     cfg.testCmd,
-    { root: testDir, tmp: cfg.tmpDir, network: cfg.network, gitWrite: false, disabled: !cfg.sandbox, denyRead: cfg.denyRead },
+    { root: testDir, tmp: cfg.tmpDir, network: cfg.network, gitWrite: false, disabled: !cfg.sandbox, denyRead: cfg.denyRead, denyPorts: cfg.denyPorts },
     { timeoutMs: cfg.testTimeoutMs, maxOutput: cfg.maxOutput, signal },
   );
   await rm(testDir, { recursive: true, force: true });

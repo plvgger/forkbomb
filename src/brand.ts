@@ -1,6 +1,6 @@
 /**
  * The product's name, in one place. Rename here and the env names
- * (<SLUG>_API_KEY, <SLUG>_HOSTED_URL, <SLUG>_HOME), the home dir (~/.<slug>),
+ * (<SLUG>_API_KEY, <SLUG>_HOSTED_URL, <SLUG>_OPENAI_API_KEY, <SLUG>_HOME), the home dir (~/.<slug>),
  * the hosted key prefix and user-facing text follow.
  */
 export const BRAND = {
@@ -18,6 +18,8 @@ const ENV_PREFIX = BRAND.slug.toUpperCase();
 export const HOSTED_KEY_ENV = `${ENV_PREFIX}_API_KEY`;
 /** Env var overriding the hosted API base URL. */
 export const HOSTED_URL_ENV = `${ENV_PREFIX}_HOSTED_URL`;
+/** Env var holding the key for --engine openai, sent to whichever server that engine is pointed at. */
+export const OPENAI_ENGINE_KEY_ENV = `${ENV_PREFIX}_OPENAI_API_KEY`;
 /** Env var overriding where runs, the clone helper and the .env file live. */
 export const HOME_ENV = `${ENV_PREFIX}_HOME`;
 export const DEFAULT_HOSTED_URL = `${BRAND.site}/api/v1`;

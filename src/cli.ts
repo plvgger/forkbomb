@@ -15,7 +15,7 @@ import { type CanaryResult, cachedCanaryPass, runCanary } from "./engines/canary
 import { ChatError } from "./engines/chat.js";
 import { shortVersion } from "./engines/claude-code.js";
 import { HostedClient, formatCredits, hostedSettings } from "./engines/hosted.js";
-import { OPENAI_KEY_ENV, OPENAI_URL_ENV, OpenAIClient, checkServer, doctorOpenAI, openaiSettings } from "./engines/openai.js";
+import { OPENAI_ENGINE_KEY_ENV, OPENAI_KEY_ENV, OPENAI_URL_ENV, OpenAIClient, checkServer, doctorOpenAI, keyNotice, openaiSettings } from "./engines/openai.js";
 import { canClone } from "./fork/forker.js";
 import { DEFAULT_PROTECT } from "./judge.js";
 import { runRace } from "./orchestrator.js";
@@ -84,10 +84,12 @@ const CREDENTIALS = `Credentials: with --engine claude-code, whatever Claude Cod
 in ${HOME}/.env. With --engine hosted, ${HOSTED_KEY_ENV} in the environment or in
 ${HOME}/.env (get a key and top up at ${BRAND.site}/app; ${HOSTED_URL_ENV}
 overrides the gateway, default ${BRAND.site}/api/v1). With --engine openai,
-${OPENAI_KEY_ENV} in either place if the server needs one (local servers usually
-don't). Keys stay on your machine: the Anthropic key goes only to Anthropic, the
-hosted key only to the hosted gateway, ${OPENAI_KEY_ENV} only to the --engine
-openai server, and no key ever reaches a fork. Self-hosting stays free.
+${OPENAI_ENGINE_KEY_ENV} in either place if the server needs one (local servers
+usually don't); ${OPENAI_KEY_ENV} is used only with ${OPENAI_URL_ENV} set in the
+same place, or for api.openai.com. Keys stay on your machine: the Anthropic key
+goes only to Anthropic, the hosted key only to the hosted gateway, the openai
+engine's key only to its server (the run says which key it sends where), and no
+key ever reaches a fork. Self-hosting stays free.
 ${HOME_ENV} moves ${DEFAULT_HOME}${HOME === DEFAULT_HOME ? "" : ` (here: ${HOME})`}.`;
 
 const HELP = `${CLI}: fork a coding agent into N sandboxed copies of your repo. They race, the tests judge, the losers get killed and one exits 0.
@@ -114,6 +116,9 @@ const COMMAND_HELP: Record<Command, string> = {
 /** <home>/.env as people type it, for messages about where keys go. */
 const ENV_FILE = `${HOME}/.env`;
 
+/** The env vars loadEnvFile filled in from <home>/.env; every other one came from the environment. */
+const FROM_ENV_FILE = new Set<string>();
+
 /** Fill unset env vars from <home>/.env. Skips the read when every wanted var is already set. */
 function loadEnvFile(...want: string[]): void {
   if (want.length && want.every((k) => process.env[k])) return;
@@ -121,7 +126,10 @@ function loadEnvFile(...want: string[]): void {
   if (!existsSync(f)) return;
   for (const line of readFileSync(f, "utf8").split("\n")) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");
+    if (m && !process.env[m[1]!]) {
+      process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");
+      FROM_ENV_FILE.add(m[1]!);
+    }
   }
 }
 
@@ -279,15 +287,17 @@ async function cmdRun(argv: string[]): Promise<void> {
     fail("--engine openai needs --model: an id the server serves, for example --model qwen2.5-coder:7b on Ollama.");
   }
   let openai: OpenAIClient | null = null;
+  let openaiKeys: string[] = [];
   if (engine === "openai") {
-    loadEnvFile(OPENAI_URL_ENV, OPENAI_KEY_ENV);
-    const s = openaiSettings(values["base-url"]);
+    loadEnvFile(OPENAI_URL_ENV, OPENAI_ENGINE_KEY_ENV);
+    const s = openaiSettings(values["base-url"], process.env, FROM_ENV_FILE);
     if (!s.baseUrl) fail(`--engine openai needs a server: pass --base-url (for example http://localhost:11434/v1 for Ollama) or set ${OPENAI_URL_ENV}.`);
     try {
-      openai = new OpenAIClient({ baseUrl: s.baseUrl, apiKey: s.apiKey, model: values.model!.trim(), urlSetting: s.urlSetting });
+      openai = new OpenAIClient({ baseUrl: s.baseUrl, apiKey: s.apiKey, model: values.model!.trim(), urlSetting: s.urlSetting, ...(s.key ? { keyName: s.key.name } : {}) });
     } catch (e) {
       fail((e as Error).message);
     }
+    openaiKeys = keyNotice(s, openai.host, ENV_FILE);
   }
   const runsDir = resolve(values["runs-dir"] ?? join(appHome(), "runs"));
   if (within(runsDir, repo)) fail("--runs-dir can't be inside the repo");
@@ -346,10 +356,12 @@ async function cmdRun(argv: string[]): Promise<void> {
     if (me.credits.balanceMicroUsd <= 0) fail(`no hosted credit left. Burn $${BRAND.ticker} to top up at ${hosted.topUpUrl}`);
     console.log(`${CLI}: hosted credit $${me.credits.balanceUsd.toFixed(4)} · model ${me.pricing.model}`);
   } else if (openai) {
+    // Which key goes where is said before the first request carries it.
+    for (const line of openaiKeys) console.log(`${CLI}: ${line}`);
     // Is the server up, does it take the key, does it serve the model? Asked before forking anything.
     const warning = await checkServer(openai, AbortSignal.timeout(15_000)).catch((e: Error) => fail(e.message));
     if (warning) console.warn(`${CLI}: ${warning}`);
-    console.log(`${CLI}: OpenAI-compatible server at ${openai.host} · model ${openai.model}${openai.hasKey ? "" : ` · no ${OPENAI_KEY_ENV}`}`);
+    console.log(`${CLI}: OpenAI-compatible server at ${openai.host} · model ${openai.model}`);
   } else {
     const bin = values["claude-bin"] ?? "claude";
     const st = await exec(bin, ["auth", "status"]).catch(() => null);
@@ -605,9 +617,9 @@ async function cmdDoctor(argv: string[]): Promise<void> {
   const claudeIn = !!st && !/"loggedIn":\s*false/.test(st.stdout);
   const apiKey = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
   const hs = hostedSettings();
-  const oas = openaiSettings();
-  // Claude Code is the default engine, but not the only one: without it, a key or a server for another engine will do.
-  if (claudeIn || (!apiKey && !hs.apiKey && !oas.baseUrl)) {
+  const oa = await doctorOpenAI(openaiSettings(undefined, process.env, FROM_ENV_FILE), AbortSignal.timeout(8000), ENV_FILE);
+  // Claude Code is the default engine, but not the only one: without it, a key or a working server for another engine will do.
+  if (claudeIn || (!apiKey && !hs.apiKey && oa.level !== "ok")) {
     check(claudeIn, "Claude Code logged in (engine: claude-code, uses your Claude plan)", st ? "run: claude auth login" : "install Claude Code, or set up --engine api, hosted or openai");
   } else console.log("info  Claude Code isn't logged in. That's fine if you use --engine api, hosted or openai");
   if (apiKey) console.log("ok    Anthropic API key (engine: api)");
@@ -624,7 +636,6 @@ async function cmdDoctor(argv: string[]): Promise<void> {
       else console.log(`info  hosted key set, but the gateway check failed: ${(e as Error).message}`);
     }
   }
-  const oa = await doctorOpenAI(oas, AbortSignal.timeout(8000));
   if (oa.level === "info") console.log(`info  ${oa.text}`);
   else check(oa.level === "ok", oa.text, oa.hint);
   if (claudeIn) {

@@ -225,6 +225,8 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   }
 
   // The runs folder is denied by name: under ~ that changes nothing, outside ~ it keeps other forks and runs private.
+  // A model server on this machine answers anyone on loopback, so its port is closed to every sandboxed command.
+  const denyPorts = chat?.loopbackPort ? [chat.loopbackPort] : undefined;
   const specFor = (root: string, id: string): SandboxSpec => ({
     root,
     tmp: join(runDir, "tmp", id),
@@ -232,6 +234,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     gitWrite: false,
     disabled: !o.sandbox,
     denyRead: [runsDir],
+    ...(denyPorts ? { denyPorts } : {}),
   });
 
   // A test command naming a script package.json doesn't have can never pass: stop before spending the baseline.
@@ -278,6 +281,17 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   let creditLogged = false;
   // A hosted cold start keeps every fork waiting on the same GPU worker: say so once for the run, not once per fork.
   const warmUp = o.hosted ? new WarmUpNotice((msg) => bus.emit({ type: "log", level: "info", msg }), o.queueNotice) : null;
+  // A model without tool calling, or a server that drops the tools, answers in text and stops: a round that looks
+  // like any other failed one. Which forks called a tool and which just ended their turn, to say so (see round_end).
+  const usedTools = new Set<string>();
+  const endedTurn = new Set<string>();
+  const unwatch = o.openai
+    ? bus.on((e) => {
+        if (e.type === "tool") usedTools.add(e.fork);
+        else if (e.type === "fork_done" && e.reason === "end_turn") endedTurn.add(e.fork);
+      })
+    : null;
+  let toollessLogged = false;
   // The balance before any fork runs, so the run can report what it was really charged (see chargedSince).
   const balanceBefore = o.hosted?.balance ? await o.hosted.balance(AbortSignal.timeout(15_000)).catch(() => null) : null;
 
@@ -462,6 +476,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
             forker,
             stateDir: join(runDir, "state", id),
             tmpDir: join(runDir, "tmp", `judge-${id}`),
+            ...(denyPorts ? { denyPorts } : {}),
             network: o.network,
             sandbox: o.sandbox,
             denyRead: [runsDir],
@@ -526,6 +541,14 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
       if (!records[i]) losers.push(dirs[i]!, join(runDir, "state", ids[i]!));
     });
     bus.emit({ type: "round_end", round, best: roundBest?.id ?? null, bestScore: roundBest?.score ?? 0 });
+    if (o.openai && !toollessLogged && ids.every((id) => endedTurn.has(id) && !usedTools.has(id))) {
+      toollessLogged = true;
+      bus.emit({
+        type: "log",
+        level: "warn",
+        msg: `No fork called a tool: each one answered in text and stopped. Forks change code only through tool calls, so check that ${o.openai.label} can call tools and that the server passes them on (Ollama: a model with the "tools" tag; vLLM: --enable-auto-tool-choice with a --tool-call-parser; llama.cpp: --jinja).`,
+      });
+    }
 
     if (roundBest && better(roundBest, overallBest)) overallBest = roundBest;
     if (roundBest && roundBest.score === 1) winner = roundBest;
@@ -544,6 +567,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   }
   o.signal?.removeEventListener("abort", onInterrupt);
   warmUp?.dispose();
+  unwatch?.();
 
   // A "best" fork is only worth keeping if it did better than the repo did on its own.
   const improved = overallBest && overallBest.score > baseScore ? overallBest : null;

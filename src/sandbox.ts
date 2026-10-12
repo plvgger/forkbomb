@@ -24,6 +24,12 @@ export interface SandboxSpec {
    * when FORKBOMB_HOME or --runs-dir puts runs outside ~.
    */
   denyRead?: string[];
+  /**
+   * Ports the command may not connect to, on any address, even with network on. The orchestrator passes the
+   * port of a model server on this machine (Ollama, LM Studio, vLLM...): such a server takes requests from anyone
+   * on loopback, and a fork must not drive it (pull from a registry, delete models).
+   */
+  denyPorts?: number[];
 }
 
 export interface RunOutcome {
@@ -75,9 +81,12 @@ function realOrSelf(p: string): string {
  * - writes only inside the fork's clone and private temp dir (.git excluded for forks);
  * - nothing under the home folder or a denyRead folder is readable except the clone, the
  *   temp dir and toolchain folders (metadata stays visible so path lookups behave normally);
- * - no network except loopback, and no access to the system DNS resolver.
+ * - no network except loopback, and no access to the system DNS resolver;
+ * - no connection to a denyPorts port on any address, with or without network.
  */
 export function seatbeltProfile(spec: SandboxSpec): string {
+  const ports = [...new Set(spec.denyPorts ?? [])];
+  for (const p of ports) if (!Number.isInteger(p) || p < 1 || p > 65535) throw new Error(`denyPorts: ${p} is not a port`);
   mkdirSync(spec.tmp, { recursive: true });
   const root = realpathSync(spec.root);
   const tmp = realpathSync(spec.tmp);
@@ -104,9 +113,20 @@ export function seatbeltProfile(spec: SandboxSpec): string {
     // Split by operation. One `(allow network* (local ip "localhost:*") ...)` would match every outbound
     // socket, since a socket that hasn't bound yet counts as local localhost, and so let any destination through.
     lines.push('(allow network-bind network-inbound (local ip "localhost:*"))');
-    lines.push('(allow network-outbound (remote ip "localhost:*"))');
+    // Under the (deny network*) above, a later deny for one port doesn't override an allow of
+    // `remote ip "localhost:*"` (on macOS 15 the connection goes through), but it does override allows of
+    // `remote tcp` and `remote udp`. So with ports to deny, loopback is allowed per protocol; without, the profile
+    // stays as it always was.
+    lines.push(
+      ports.length
+        ? '(allow network-outbound (remote tcp "localhost:*") (remote udp "localhost:*"))'
+        : '(allow network-outbound (remote ip "localhost:*"))',
+    );
     lines.push('(deny mach-lookup (global-name "com.apple.mDNSResponder") (global-name "com.apple.dnssd.service"))');
   }
+  // "*", not "localhost": with --network on, a server listening on every interface is reachable at this
+  // machine's LAN address too.
+  if (ports.length) lines.push(`(deny network-outbound ${ports.map((p) => `(remote ip "*:${p}")`).join(" ")})`);
   return lines.join("\n");
 }
 

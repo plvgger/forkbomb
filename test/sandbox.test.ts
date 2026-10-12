@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { type Server, createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { MAX_FILE_KIB, PROCESS_HEADROOM, type SandboxSpec, runSandboxed } from "../src/sandbox.js";
+import { MAX_FILE_KIB, PROCESS_HEADROOM, type SandboxSpec, runSandboxed, seatbeltProfile } from "../src/sandbox.js";
 import { tempDir } from "./helpers.js";
 
 function spec(root: string, extra: Partial<SandboxSpec> = {}): SandboxSpec {
@@ -70,6 +70,52 @@ describe("sandbox", () => {
       expect(local.output).toContain("local-ok");
     } finally {
       server.close();
+    }
+  });
+
+  it("closes a denied port on every loopback address, with network off or on, and leaves the rest of loopback open", async () => {
+    const root = tempDir("sb");
+    const listen = (host: string) =>
+      new Promise<Server>((r) => {
+        const s = createServer((_, res) => res.end("ok"));
+        s.listen(0, host, () => r(s));
+      });
+    // A model server listening on every interface, as Ollama does with OLLAMA_HOST=0.0.0.0, and some other local service.
+    const model = await listen("::");
+    const other = await listen("127.0.0.1");
+    const mp = (model.address() as { port: number }).port;
+    const op = (other.address() as { port: number }).port;
+    const targets = [`127.0.0.1:${mp}`, `localhost:${mp}`, `[::1]:${mp}`, `0.0.0.0:${mp}`, `127.0.0.1:${op}`];
+    const curl = targets.map((t) => `curl -gs -m 2 -o /dev/null -w '${t}=%{http_code} ' http://${t}/`).join("; ");
+    // Outside addresses stay refused, over TCP and UDP, and UDP on loopback still works.
+    const udp = `${JSON.stringify(process.execPath)} -e 'const net = require("net"), dgram = require("dgram");
+      const c = net.connect({ host: "192.0.2.1", port: 443, timeout: 3000 });
+      c.on("connect", () => { console.log("TCP_CONNECTED"); c.destroy(); });
+      c.on("timeout", () => { console.log("TCP_TIMEOUT"); c.destroy(); });
+      c.on("error", (e) => console.log("TCP_" + e.code));
+      for (const host of ["192.0.2.1", "127.0.0.1"]) {
+        const s = dgram.createSocket("udp4");
+        s.send("x", ${op}, host, (e) => { console.log(host + (e ? " UDP_" + e.code : " UDP_SENT")); s.close(); });
+      }'`;
+    try {
+      for (const network of [false, true]) {
+        const r = await run(curl, spec(root, { network, denyPorts: [mp] }));
+        for (const t of targets.slice(0, 4)) expect(r.output, `${t}, network ${network}`).toContain(`${t}=000 `);
+        expect(r.output).toContain(`127.0.0.1:${op}=200 `);
+      }
+      const off = await run(udp, spec(root, { denyPorts: [mp] }));
+      expect(off.output).toContain("TCP_EPERM");
+      expect(off.output).toContain("192.0.2.1 UDP_EPERM");
+      expect(off.output).toContain("127.0.0.1 UDP_SENT");
+      // Without denyPorts, the port answers like any other, from the profile every other run gets.
+      const open = await run(curl, spec(root));
+      expect(open.output).toContain(`127.0.0.1:${mp}=200 `);
+      expect(seatbeltProfile(spec(root))).toContain('(allow network-outbound (remote ip "localhost:*"))');
+      expect(seatbeltProfile(spec(root))).not.toContain("remote tcp");
+      expect(() => seatbeltProfile(spec(root, { denyPorts: [0] }))).toThrow("denyPorts: 0 is not a port");
+    } finally {
+      model.close();
+      other.close();
     }
   });
 

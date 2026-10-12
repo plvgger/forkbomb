@@ -1,3 +1,4 @@
+import { OPENAI_ENGINE_KEY_ENV } from "../brand.js";
 import { ChatError, type ChatHttpOptions, ChatHttpClient, type ChatRequest, type ChatTurn, type StreamWatch } from "./chat.js";
 
 /**
@@ -10,37 +11,105 @@ import { ChatError, type ChatHttpOptions, ChatHttpClient, type ChatRequest, type
 /** The names the OpenAI SDKs use, so a setup that works for them works here. */
 export const OPENAI_KEY_ENV = "OPENAI_API_KEY";
 export const OPENAI_URL_ENV = "OPENAI_BASE_URL";
+export { OPENAI_ENGINE_KEY_ENV };
 
 export interface OpenAISettings {
   baseUrl: string | null;
   /** Where baseUrl came from, to name it in errors: --base-url or OPENAI_BASE_URL. */
   urlSetting: string;
   apiKey: string | null;
+  /** The variable the key came from, and whether the environment or the .env file set it. Null when no key is sent. */
+  key: { name: string; from: "env" | "file" } | null;
+  /** Why an OPENAI_API_KEY that is set isn't sent to this server, or null. */
+  withheld: string | null;
 }
 
-/** --base-url, else OPENAI_BASE_URL; the key from OPENAI_API_KEY (call the .env loader first). Blank values count as unset. */
-export function openaiSettings(flag?: string, env: NodeJS.ProcessEnv = process.env): OpenAISettings {
-  const fromFlag = flag?.trim();
-  return {
-    baseUrl: fromFlag || env[OPENAI_URL_ENV]?.trim() || null,
-    urlSetting: fromFlag ? "--base-url" : OPENAI_URL_ENV,
-    apiKey: env[OPENAI_KEY_ENV]?.trim() || null,
+const hostOf = (url: string | null) => {
+  try {
+    return url ? new URL(url).host : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The server: --base-url, else OPENAI_BASE_URL. The key: FORKBOMB_OPENAI_API_KEY, this engine's own, which goes to
+ * whichever server that is. Failing that, OPENAI_API_KEY, but only where an OpenAI SDK with the same settings
+ * would send it: to api.openai.com, or to the server OPENAI_BASE_URL names when both were set in the same place
+ * (both in the environment, or both in the .env file). So a key exported for other tools never goes to a server
+ * named some other way. `fromFile` is what the .env loader filled in; everything else came from the environment.
+ * Blank values count as unset.
+ */
+export function openaiSettings(flag?: string, env: NodeJS.ProcessEnv = process.env, fromFile: ReadonlySet<string> = new Set()): OpenAISettings {
+  const read = (name: string) => {
+    const value = env[name]?.trim();
+    return value ? { name, value, from: fromFile.has(name) ? ("file" as const) : ("env" as const) } : null;
   };
+  const fromFlag = flag?.trim();
+  const url = fromFlag ? null : read(OPENAI_URL_ENV);
+  const baseUrl = fromFlag || url?.value || null;
+  const own = read(OPENAI_ENGINE_KEY_ENV);
+  const sdk = read(OPENAI_KEY_ENV);
+  const host = hostOf(baseUrl);
+  const paired = !!sdk && (host === "api.openai.com" || (!!url && url.from === sdk.from));
+  const key = own ?? (paired ? sdk : null);
+  return {
+    baseUrl,
+    urlSetting: fromFlag ? "--base-url" : OPENAI_URL_ENV,
+    apiKey: key?.value ?? null,
+    key: key ? { name: key.name, from: key.from } : null,
+    withheld:
+      sdk && !key && host
+        ? `${OPENAI_KEY_ENV} is set but isn't sent to ${host}: it only goes to api.openai.com, or to the server ${OPENAI_URL_ENV} names when both are set in the same place. If ${host} needs a key, set ${OPENAI_ENGINE_KEY_ENV}.`
+        : null,
+  };
+}
+
+/** "FORKBOMB_OPENAI_API_KEY (from the environment)", or null when no key is sent. */
+function keySource(s: OpenAISettings, envFile: string): string | null {
+  return s.key ? `${s.key.name} (from ${s.key.from === "file" ? envFile : "the environment"})` : null;
+}
+
+/** Which key goes where, said before anything is sent: "sending FORKBOMB_OPENAI_API_KEY (from the environment) to openrouter.ai". */
+export function keyNotice(s: OpenAISettings, host: string, envFile: string): string[] {
+  const key = keySource(s, envFile);
+  const sent = key ? `sending ${key} to ${host}` : `no API key sent to ${host}`;
+  return s.withheld ? [sent, s.withheld] : [sent];
 }
 
 export interface OpenAIClientOptions extends Omit<ChatHttpOptions, "urlSetting" | "errorGraceMs"> {
   model: string;
   urlSetting?: string;
+  /** The variable the key came from, for messages about it. Default FORKBOMB_OPENAI_API_KEY. */
+  keyName?: string;
 }
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+/** The statuses a server turns a request down with. A 5xx is the server's own trouble, often passing on. */
+const REFUSALS = new Set([400, 404, 422]);
+/** A server error that quotes what the model wrote (Ollama: "error parsing tool call: raw='…'"), so its words are the model's, not the server's. */
+const QUOTES_MODEL = /parsing tool call|raw=/i;
 
-/** "model X does not support tools" (Ollama), "auto tool choice requires --enable-auto-tool-choice" (vLLM), "tools param requires --jinja" (llama.cpp), "No endpoints found that support tool use" (OpenRouter). */
-const noTools = (text: string) => /\btool/i.test(text) && /support|requires?|enable|jinja|no endpoints?/i.test(text);
+/**
+ * The server or the model can't do tool calls, in the server's own words: "registry.ollama.ai/library/x does not
+ * support tools" (Ollama), '"auto" tool choice requires --enable-auto-tool-choice' (vLLM), "No endpoints found that
+ * support tool use" (OpenRouter), all 4xx; "tools param requires --jinja flag" (llama.cpp, which answers it with a
+ * 500 and that message alone). Only an answer to the request counts, never a mid-stream error.
+ */
+function noTools(status: number, message: string): boolean {
+  if (QUOTES_MODEL.test(message)) return false;
+  if (status === 500) return /^tools param requires --jinja\b/i.test(message.trim());
+  return REFUSALS.has(status) && /does not support tools|tool choice requires --enable-auto-tool-choice|tools param requires --jinja|no endpoints found that support tool use/i.test(message);
+}
 
-/** 'model "x" not found' (Ollama), "The model `x` does not exist" (vLLM), "x is not a valid model ID" (OpenRouter). */
-const noModel = (status: number, text: string) =>
-  /model/i.test(text) && (status === 404 || /not found|does(?: not|n't) exist|not a valid|invalid model|unknown model|no such model/i.test(text));
+/** 'model "x" not found' (Ollama), "The model `x` does not exist" (vLLM), "x is not a valid model ID" (OpenRouter): a 4xx answer to the request. */
+function noModel(status: number, text: string): boolean {
+  if (!REFUSALS.has(status) || QUOTES_MODEL.test(text) || !/model/i.test(text)) return false;
+  return status === 404 || /not found|does(?: not|n't) exist|not a valid|invalid model|unknown model|no such model/i.test(text);
+}
+
+/** A 403 that is about the key rather than the request (OpenRouter answers 403 for input its moderation flags). */
+const aboutKey = (text: string) => /api[ _-]?key|\bkey\b|token|auth|credential/i.test(text);
 
 export class OpenAIClient extends ChatHttpClient {
   readonly model: string;
@@ -51,11 +120,13 @@ export class OpenAIClient extends ChatHttpClient {
   protected readonly stream: string;
   /** Ask for the usage chunk (stream_options.include_usage) until the server turns the option down. */
   #usage = true;
+  readonly #keyName: string;
 
   constructor(o: OpenAIClientOptions) {
     // No settlement ever follows an error event here, so there is nothing to wait for after one.
     super({ ...o, urlSetting: o.urlSetting ?? OPENAI_URL_ENV, errorGraceMs: 0 });
     this.model = o.model;
+    this.#keyName = o.keyName ?? OPENAI_ENGINE_KEY_ENV;
     this.label = `${o.model} at ${this.host}`;
     this.server = `the server at ${this.host}`;
     this.stream = `the stream from ${this.host}`;
@@ -92,6 +163,8 @@ export class OpenAIClient extends ChatHttpClient {
       body = await this.request("GET", "/models", undefined, signal, (res) => this.json(res), "application/json", retries);
     } catch (e) {
       if (e instanceof ChatError && (e.kind === "bad_response" || [400, 404, 405, 501].includes(e.status))) return null;
+      // A request with no input to object to is refused for who is asking: the key.
+      if (e instanceof ChatError && e.status === 403 && e.kind !== "auth") throw this.authError(403, e.serverMessage.slice(0, 300) || "HTTP 403");
       throw e;
     }
     const data = (body as { data?: unknown } | null)?.data;
@@ -103,39 +176,42 @@ export class OpenAIClient extends ChatHttpClient {
   }
 
   protected retryable(status: number, _headers: Headers, err: { message: string; code: string }): boolean {
-    // A server that can't do tool calls says so the same way every time.
-    return RETRYABLE.has(status) && !noTools(`${err.code} ${err.message}`);
+    // llama.cpp without --jinja answers 500 to every request with tools, the same way every time.
+    return RETRYABLE.has(status) && !noTools(status, err.message);
   }
 
   protected unreachable(why: string): string {
     return `can't reach ${this.server} (${why}). Check that it's running and that the base URL is right.`;
   }
 
-  protected toError(status: number, err: { message: string; code: string }, retries: number): ChatError {
+  private authError(status: number, detail: string): ChatError {
+    return new ChatError(
+      "auth",
+      status,
+      this.hasKey
+        ? `${this.server} rejected the API key (${status}: ${detail}). Check ${this.#keyName}.`
+        : `${this.server} wants an API key (${status}: ${detail}). Set ${OPENAI_ENGINE_KEY_ENV}.`,
+    );
+  }
+
+  protected toError(status: number, err: { message: string; code: string }, retries: number, _transient: boolean, inStream: boolean): ChatError {
     const detail = this.redact(err.message || err.code || `HTTP ${status}`).slice(0, 300);
     const text = `${err.code} ${err.message}`;
     const tries = retries ? ` after ${retries} retries` : "";
-    if (status === 401 || status === 403) {
-      return new ChatError(
-        "auth",
-        status,
-        this.hasKey
-          ? `${this.server} rejected the API key (${status}: ${detail}). Check ${OPENAI_KEY_ENV}.`
-          : `${this.server} wants an API key (${status}: ${detail}). Set ${OPENAI_KEY_ENV}.`,
-      );
-    }
+    if (status === 401 || (status === 403 && aboutKey(text))) return this.authError(status, detail);
     if (status === 402) return new ChatError("credits", status, `${this.server} says the account is out of credit (${detail}). Top up with the provider and run again.`);
-    if (status >= 400 && noTools(text)) {
+    // Fatal kinds come only from the server's answer to the request: an error mid-stream can quote the model.
+    if (!inStream && noTools(status, err.message)) {
       return new ChatError(
         "tools",
         status,
         `${this.server} can't do tool calls with ${this.model} (${detail}). Forks need tool calling: pick a model that supports it (on Ollama, one with the "tools" tag), or turn it on in the server (vLLM: --enable-auto-tool-choice with a --tool-call-parser; llama.cpp: --jinja).`,
       );
     }
-    if (noModel(status, text)) {
+    if (!inStream && noModel(status, text)) {
       return new ChatError("model", status, `${this.server} has no model "${this.model}" (${detail}). Check --model against GET ${this.baseUrl}/models; on Ollama, pull it first: ollama pull ${this.model}`);
     }
-    if (status === 404) {
+    if (status === 404 && !inStream) {
       return new ChatError("endpoint", status, `${this.server} has no Chat Completions API at ${this.baseUrl} (404: ${detail}). Check the base URL: it usually ends in /v1, like http://localhost:11434/v1.`);
     }
     if (status === 429) return new ChatError("rate", status, `rate limited by ${this.server}${tries} (${detail})`);
@@ -157,11 +233,18 @@ export function hasModel(ids: readonly string[], model: string): boolean {
 
 /**
  * Before any fork starts: can the server be reached, does it take the key, and does it serve the model? Asked once,
- * without retries, and throws with what to do about it. Returns a warning when the server has no model list, so
- * the model couldn't be checked.
+ * without retries. An unreachable server, a rejected key or a missing model throws with what to do about it. Any
+ * other trouble (a 429, a 5xx) only means the model couldn't be checked: that, or a server with no model list,
+ * comes back as a warning and the run goes on, its forks retrying as usual.
  */
 export async function checkServer(client: OpenAIClient, signal: AbortSignal): Promise<string | null> {
-  const ids = await client.models(signal, 0);
+  let ids: string[] | null;
+  try {
+    ids = await client.models(signal, 0);
+  } catch (e) {
+    if (!(e instanceof ChatError) || e.kind === "auth" || e.kind === "network") throw e;
+    return `couldn't check --model ${client.model}: ${e.message}; starting anyway.`;
+  }
   if (ids === null) {
     return `the server at ${client.host} has no model list (GET /models), so --model ${client.model} wasn't checked. If every fork fails, check the base URL: it usually ends in /v1.`;
   }
@@ -171,25 +254,29 @@ export async function checkServer(client: OpenAIClient, signal: AbortSignal): Pr
   throw new Error(`the server at ${client.host} has no model "${client.model}". ${lists} Pass one it lists to --model; on Ollama, pull it first: ollama pull ${client.model}`);
 }
 
-/** `forkbomb doctor`'s line for this engine: its settings, and whether the server answers. Never shows the key. */
-export async function doctorOpenAI(s: OpenAISettings, signal: AbortSignal): Promise<{ level: "ok" | "fail" | "info"; text: string; hint?: string }> {
+/**
+ * `forkbomb doctor`'s line for this engine: its settings, and whether the server answers. Never shows the key.
+ * Only a key the server turns down fails: OPENAI_BASE_URL may be set for other tools, so a URL this engine won't
+ * take, or a server that isn't running right now, is only worth a note.
+ */
+export async function doctorOpenAI(s: OpenAISettings, signal: AbortSignal, envFile: string): Promise<{ level: "ok" | "fail" | "info"; text: string; hint?: string }> {
   const label = "OpenAI-compatible server (engine: openai)";
   if (!s.baseUrl) {
     return { level: "info", text: `No OpenAI-compatible server set (${OPENAI_URL_ENV}). That's fine: it's only needed for --engine openai, which also takes --base-url` };
   }
-  const key = s.apiKey ? `with ${OPENAI_KEY_ENV}` : `no ${OPENAI_KEY_ENV}`;
   let client: OpenAIClient;
   try {
-    client = new OpenAIClient({ baseUrl: s.baseUrl, apiKey: s.apiKey, model: "", urlSetting: s.urlSetting });
+    client = new OpenAIClient({ baseUrl: s.baseUrl, apiKey: s.apiKey, model: "", urlSetting: s.urlSetting, ...(s.key ? { keyName: s.key.name } : {}) });
   } catch (e) {
-    return { level: "fail", text: label, hint: (e as Error).message };
+    return { level: "info", text: `${(e as Error).message}. Only --engine openai reads it, and it can't use this one` };
   }
+  const source = keySource(s, envFile);
+  const key = source ? `with ${source}` : "no API key";
   try {
     const ids = await client.models(signal, 0);
     const what = ids === null ? "answers (no model list)" : `lists ${ids.length} model${ids.length === 1 ? "" : "s"}`;
     return { level: "ok", text: `${label}: ${client.baseUrl} ${what}, ${key}` };
   } catch (e) {
-    // A key the server turns down is broken; a server that isn't running right now is only worth a note.
     if (e instanceof ChatError && e.kind === "auth") return { level: "fail", text: `${label}: ${client.baseUrl}`, hint: e.message };
     return { level: "info", text: `${OPENAI_URL_ENV} is ${client.baseUrl} (${key}), but ${(e as Error).message}` };
   }
