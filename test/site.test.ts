@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseEventLog } from "../src/events.js";
@@ -22,6 +22,20 @@ describe("forkbomb.fun", () => {
     expect(stated % 10, "web/app/config.ts TEST_COUNT is a round floor").toBe(0);
     expect(tests.length, "web/app/config.ts TEST_COUNT").toBeGreaterThanOrEqual(stated);
     expect(tests.length - stated, "raise web/app/config.ts TEST_COUNT").toBeLessThan(50);
+  });
+});
+
+describe("README", () => {
+  it("shows only images that are in the repo", () => {
+    const readme = readFileSync(join(process.cwd(), "README.md"), "utf8");
+    const refs = [
+      ...[...readme.matchAll(/\bsrc="([^"]+)"/g)].map((m) => m[1]!),
+      ...[...readme.matchAll(/\bsrcset="([^"]+)"/g)].flatMap((m) => m[1]!.split(",").map((s) => s.trim().split(/\s+/)[0]!)),
+      ...[...readme.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)].map((m) => m[1]!),
+    ];
+    const local = refs.filter((r) => !/^[a-z]+:/i.test(r));
+    expect(local).toContain("docs/assets/demo.gif"); // the hero
+    for (const r of local) expect(existsSync(join(process.cwd(), r)), r).toBe(true);
   });
 });
 
