@@ -196,10 +196,15 @@
         $("task").textContent = e.task;
         $("testCmd").textContent = e.testCmd;
         $("model").textContent = `${e.model} · ${e.effort} · ${e.mode}`;
-        S.subscription = e.engine === "claude-code";
-        if (S.subscription) {
+        // No per-token figure to add up: a Claude plan, or a server that bills (if at all) out of sight.
+        S.subscription = e.engine === "claude-code" || e.engine === "openai";
+        if (e.engine === "claude-code") {
           $("cost").textContent = "on Claude plan";
           $("cost").title = "Forks run through Claude Code on your Claude plan, so there's no per-token bill.";
+          $("costUnit").textContent = "";
+        } else if (e.engine === "openai") {
+          $("cost").textContent = "cost unknown";
+          $("cost").title = "Forks run on your OpenAI-compatible server. Whatever it bills, Forkbomb doesn't see it.";
           $("costUnit").textContent = "";
         }
         $("tSandbox").textContent = e.sandbox ? "Seatbelt" : "off";

@@ -10,7 +10,7 @@ export type RunEvent =
       forks: number;
       rounds: number;
       model: string;
-      engine: "api" | "claude-code" | "hosted";
+      engine: "api" | "claude-code" | "hosted" | "openai";
       effort: string;
       mode: "race" | "best";
       repo: string;
