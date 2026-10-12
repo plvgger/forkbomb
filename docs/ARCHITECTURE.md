@@ -38,6 +38,7 @@ This document describes the code as it is in 0.1.0. File paths are the source of
 | `src/procs.ts` | Registry of live child process groups, so an interrupted run leaves nothing behind |
 | `src/pricing.ts` | Per-token list prices for `api` engine cost estimates |
 | `src/brand.ts` | Product name, slug and the env variable names derived from it |
+| `package.json` `files`, `scripts/check-package.sh` | What the npm package ships (`dist/*.js`, `native/`, `ui/`, README, LICENSE) and the install check CI runs on the packed tarball |
 | `web/lib/server/` | Gateway, credits, burn verifier, price sampler, keys, rate limits, database |
 | `web/app/api/` | Route handlers for the hosted API, burns, ledger, price, token and cron |
 | `web/app/app/` | The wallet app at `/app` |
