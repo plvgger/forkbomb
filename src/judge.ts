@@ -15,6 +15,13 @@ import { matchesAny, q } from "./util.js";
 export const DEFAULT_PROTECT = [
   "**/*.test.*",
   "**/*.spec.*",
+  // The other names `node --test` runs when given no files: *-test.js, *_test.js, test-*.js and test.js (and .mjs/.cjs).
+  "**/*-test.*",
+  "**/*_test.*",
+  "**/test-*.*",
+  "**/test.js",
+  "**/test.mjs",
+  "**/test.cjs",
   "**/test/**",
   "**/tests/**",
   "**/__tests__/**",

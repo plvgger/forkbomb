@@ -48,12 +48,16 @@ describe("protect globs", () => {
   it("covers test files and config", () => {
     for (const p of ["calc.test.js", "src/a.spec.ts", "tests/x.py", "pkg/test/helper.js", "test_x.py", "package.json", "web/package.json", "vitest.config.ts",
       "tsconfig.json", "tsconfig.build.json", "babel.config.js", ".babelrc", "vitest.setup.ts", "src/setupTests.ts", "jest.setup.js", ".npmrc", "sitecustomize.py",
-      "__mocks__/chai.js", "src/__mocks__/api.ts"]) {
+      "__mocks__/chai.js", "src/__mocks__/api.ts",
+      // every other name node --test runs by default
+      "math-test.js", "lib/math_test.mjs", "test-math.cjs", "test.js", "lib/test.mjs"]) {
       expect(hit(p), p).toBe(true);
     }
   });
   it("leaves source alone", () => {
-    for (const p of ["calc.js", "src/latest.ts", "contest.py", "src/testing-utils.js", "src/config.ts", "src/setup.ts"]) expect(hit(p), p).toBe(false);
+    for (const p of ["calc.js", "src/latest.ts", "contest.py", "src/testing-utils.js", "src/config.ts", "src/setup.ts", "src/attest.js", "testing.js", "data/latest-test-data.json", "src/protest.mjs"]) {
+      expect(hit(p), p).toBe(false);
+    }
   });
 });
 
