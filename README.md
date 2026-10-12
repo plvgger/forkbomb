@@ -297,7 +297,7 @@ The architecture in depth: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 | Component | State |
 |---|---|
-| CLI | 0.1.0, pre-release. Install from source; npm release pending |
+| CLI | 0.2.0, pre-release. Install from source; npm release pending |
 | Platform | macOS (APFS and Seatbelt). No Linux or Windows sandbox yet |
 | Engines | `claude-code` and `api` live. `hosted`: GPU pool live, credit opens when $FORKBOMB launches |
 | $FORKBOMB | Not launched |

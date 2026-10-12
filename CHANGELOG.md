@@ -4,6 +4,29 @@ All notable changes to Forkbomb are documented here. The format follows [Keep a 
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-12
+
+### Added
+
+- `--engine openai`: race forks on any OpenAI-compatible Chat Completions server, such as Ollama or LM Studio on your own machine, vLLM, llama.cpp or OpenRouter. Set the server with `--base-url` (or `OPENAI_BASE_URL`) and the model with `--model`. It uses the same tool loop and sandbox as the hosted engine and spends no credit. The engine's own key is `FORKBOMB_OPENAI_API_KEY`. `OPENAI_API_KEY` goes only where an OpenAI SDK with the same settings would send it, and the run prints which key goes to which host. Before forking, a `GET /models` call checks the server, key and model. Errors every fork would hit (a rejected key, a missing model, a server that turns tool calls down) stop the run with what to change. Cost is reported as unknown. ([#21](https://github.com/plvgger/forkbomb/pull/21), closes #6)
+- The hosted engine says when the GPU pool is warming up: one note after 20 s of waiting during a cold start, the wait so far about once a minute, and a line when answers start. ([#21](https://github.com/plvgger/forkbomb/pull/21), closes #7)
+- Three more example repos to race on: `durations`, `lru-cache` and `rate-limiter`, each with interacting bugs and fake clocks so every judge run is deterministic. `examples/README.md` lists each example's baseline, and a test fails when that table goes stale. ([#17](https://github.com/plvgger/forkbomb/pull/17), closes #9)
+- npm packaging: a `files` allowlist, a `prepack` build, an executable bin, and `npm run check:package`, which installs the packed tarball in a clean folder and runs every command's `--help`, `doctor`, `bench` and `export` from it. CI runs it as a `package` job. The package isn't published yet: the npm name `forkbomb` belongs to an unrelated project. ([#22](https://github.com/plvgger/forkbomb/pull/22), closes #11)
+
+### Changed
+
+- The README opens with an animated replay of the recorded race. ([#18](https://github.com/plvgger/forkbomb/pull/18), closes #10)
+
+### Security
+
+- Tamper guard: the judge rejects a fork whose changes to non-test source files switch the tests off, such as overriding `assert` methods, replacing test-runner globals, swapping assertion modules through the module loader, or exiting early with success. It scans the patch and probes the changed modules in the sandbox. A rejected fork can't score a pass and is never applied. `--no-tamper-guard` turns it off. ([#19](https://github.com/plvgger/forkbomb/pull/19), closes #8)
+- With `--engine openai` on a local model server, that server's port is closed to forks, the baseline, the judge and the tamper guard's probe, even with `--network` on. A fork can't drive the model server, for example to pull or delete models. ([#21](https://github.com/plvgger/forkbomb/pull/21))
+- The judge protects every file `node --test` runs by default: `*-test.*`, `*_test.*`, `test-*.*` and `test.js` (with `.mjs`/`.cjs`), on top of `*.test.*`, `*.spec.*` and `test/` folders. ([#23](https://github.com/plvgger/forkbomb/pull/23), closes #20)
+
+### Fixed
+
+- The RunPod poll-spacing test no longer fails under machine load: it checks the pace the gateway keeps, not millisecond gaps between two clocks. ([#24](https://github.com/plvgger/forkbomb/pull/24))
+
 ## 0.1.0 - 2026-10-09
 
 First public pre-release. macOS on APFS, Node 22 or newer. Install from source; not on npm yet.

@@ -2,7 +2,7 @@
 
 Forkbomb has two halves. The **CLI** (`src/`, `native/`, `ui/`) runs on your Mac and does all of the agent work: it forks the repo, runs every fork in a sandbox, judges the patches and keeps the winner. The **web side** (`web/`) is forkbomb.fun: the site, the wallet app, and the hosted API that the `hosted` engine talks to. The CLI needs the web side only when you pick `--engine hosted`.
 
-This document describes the code as it is in 0.1.0. File paths are the source of truth; when this page and the code disagree, the code wins.
+This document describes the code as it is in 0.2.0. File paths are the source of truth; when this page and the code disagree, the code wins.
 
 ## At a glance
 
