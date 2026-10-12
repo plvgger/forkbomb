@@ -15,6 +15,7 @@ import { type CanaryResult, cachedCanaryPass, runCanary } from "./engines/canary
 import { shortVersion } from "./engines/claude-code.js";
 import { HostedClient, HostedError, formatCredits, hostedSettings } from "./engines/hosted.js";
 import { canClone } from "./fork/forker.js";
+import { guardSummary } from "./guard.js";
 import { DEFAULT_PROTECT } from "./judge.js";
 import { runRace } from "./orchestrator.js";
 import { killAll } from "./procs.js";
@@ -60,7 +61,8 @@ const RUN_OPTIONS = `run options
   --concurrency N     max forks talking to the API at once (default 8)
   --protect GLOB      extra read-only path for forks (repeatable)
   --no-default-protect  don't protect test files, test config, or the scripts
-                      and setup files the test command runs
+                      and setup files the test command runs, and don't reject
+                      forks whose source code tampers with the test run
   --apply             apply the winning patch to the repo
   --keep-forks        keep killed forks' clones on disk
   --network           let forks reach the network (default: loopback only)
@@ -175,6 +177,10 @@ function narrate(e: Stamped, verbose: boolean): void {
       break;
     }
     case "judge": {
+      if (e.guard?.length) {
+        say(`  ${e.fork} REJECTED · tampers with the test run: ${guardSummary(e.guard)}`);
+        break;
+      }
       const total = e.passed != null && e.failed != null ? e.passed + e.failed : null;
       const mark = e.score === 1 ? "PASS" : "fail";
       say(`  ${e.fork} ${mark} ${total != null ? `${e.passed}/${total}` : `${Math.round(e.score * 100)}%`} · ${e.diffLines} lines${e.tampered.length ? ` · reverted test edits: ${e.tampered.join(", ")}` : ""}`);
@@ -372,6 +378,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       sandbox: !values["no-sandbox"],
       protect: [...(values["no-default-protect"] ? [] : DEFAULT_PROTECT), ...(values.protect ?? [])],
       protectTestInfra: !values["no-default-protect"],
+      tamperGuard: !values["no-default-protect"],
       apply: values.apply!,
       keepForks: values["keep-forks"]!,
       runsDir,

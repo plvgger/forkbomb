@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApfsForker } from "../src/fork/forker.js";
-import { DEFAULT_PROTECT, brokenTestCommand, judge, missingScript, parseCounts, score, testInfraFiles } from "../src/judge.js";
+import { DEFAULT_PROTECT, type JudgeConfig, brokenTestCommand, judge, missingScript, parseCounts, score, testInfraFiles } from "../src/judge.js";
 import { globToRegExp } from "../src/util.js";
 import { tempDir, writeTree } from "./helpers.js";
 
@@ -47,7 +47,8 @@ describe("protect globs", () => {
   const hit = (p: string) => g.some((r) => r.test(p));
   it("covers test files and config", () => {
     for (const p of ["calc.test.js", "src/a.spec.ts", "tests/x.py", "pkg/test/helper.js", "test_x.py", "package.json", "web/package.json", "vitest.config.ts",
-      "tsconfig.json", "tsconfig.build.json", "babel.config.js", ".babelrc", "vitest.setup.ts", "src/setupTests.ts", "jest.setup.js", ".npmrc", "sitecustomize.py"]) {
+      "tsconfig.json", "tsconfig.build.json", "babel.config.js", ".babelrc", "vitest.setup.ts", "src/setupTests.ts", "jest.setup.js", ".npmrc", "sitecustomize.py",
+      "__mocks__/chai.js", "src/__mocks__/api.ts"]) {
       expect(hit(p), p).toBe(true);
     }
   });
@@ -144,7 +145,7 @@ describe("judge", () => {
     "node_modules/dep/package.json": JSON.stringify({ name: "dep", type: "module", main: "index.js" }),
     "node_modules/dep/index.js": "export const helper = (x) => x;\n",
   };
-  const run = async (ctx: Awaited<ReturnType<typeof bodyAndFork>>) =>
+  const run = async (ctx: Awaited<ReturnType<typeof bodyAndFork>>, over: Partial<JudgeConfig> = {}) =>
     judge(
       { root: ctx.fork, tmp: `${ctx.fork}-tmp`, network: false, gitWrite: false },
       {
@@ -160,6 +161,7 @@ describe("judge", () => {
         tmpDir: join(ctx.work, "tmp"),
         network: false,
         sandbox: true,
+        ...over,
       },
     );
 
@@ -174,6 +176,7 @@ describe("judge", () => {
     expect(v.patch).toContain("helper(a + b)");
     expect(v.patch).toContain("NOTES.md");
     expect(v.tampered).toEqual([]);
+    expect(v.guard).toEqual([]);
     expect(v.stateDir && readFileSync(join(v.stateDir, "sum.js"), "utf8")).toContain("a + b");
     // The body itself is never modified.
     expect(readFileSync(join(ctx.body, "sum.js"), "utf8")).toBe(files["sum.js"]);
@@ -202,8 +205,57 @@ describe("judge", () => {
   it("doesn't count a suite that silently lost tests as a pass", async () => {
     const ctx = await bodyAndFork(files);
     writeFileSync(join(ctx.fork, "sum.js"), 'process.exit(0);\nimport { helper } from "dep";\nexport const sum = (a, b) => helper(a + b);\n');
-    const v = await run(ctx);
+    // The tamper guard would reject this first; the test count catches it on its own too.
+    const v = await run(ctx, { tamperGuard: false });
     expect(v.score).toBeLessThan(1);
+  });
+
+  it("rejects a fork that neutralizes the tests' assertions from a source file (regression, #8)", async () => {
+    const ctx = await bodyAndFork(files);
+    // The bug stays; sum.js turns assert.equal into a no-op when the test file imports it.
+    writeFileSync(join(ctx.fork, "sum.js"), 'import assert from "node:assert/strict";\nimport { helper } from "dep";\nassert.equal = () => {};\nexport const sum = (a, b) => helper(a - b);\n');
+    const v = await run(ctx);
+    expect(v.score).toBe(0);
+    expect(v.guard).toEqual([{ file: "sum.js", line: 3, why: "replaces assert.equal from node:assert/strict" }]);
+    expect(v.stateDir).toBeNull();
+    expect(v.output).toMatch(/sum\.js:3 replaces assert\.equal/);
+  });
+
+  it("lets that cheat through only with the guard off, as --no-default-protect does", async () => {
+    const ctx = await bodyAndFork(files);
+    writeFileSync(join(ctx.fork, "sum.js"), 'import assert from "node:assert/strict";\nimport { helper } from "dep";\nassert.equal = () => {};\nexport const sum = (a, b) => helper(a - b);\n');
+    const v = await run(ctx, { tamperGuard: false });
+    expect(v.score).toBe(1);
+    expect(v.guard).toEqual([]);
+  });
+
+  it("catches at run time, on a node:test suite, a cheat the static rules can't read", async () => {
+    const ctx = await bodyAndFork(files);
+    // No assertion module is named where the guard could see it; only loading sum.js shows what it does.
+    writeFileSync(
+      join(ctx.fork, "sum.js"),
+      'import { createRequire } from "node:module";\nimport { helper } from "dep";\nconst load = createRequire(import.meta.url);\n' +
+        'load(["node", "assert/strict"].join(":")).equal = () => {};\nexport const sum = (a, b) => helper(a - b);\n',
+    );
+    // Loaded first, and exits: the probe has to get past it to reach sum.js.
+    writeTree(ctx.fork, { "bin/serve.js": '#!/usr/bin/env node\nprocess.exit(0);\n' });
+    const v = await run(ctx);
+    expect(v.passed).toBe(2); // the suite itself was fooled
+    expect(v.score).toBe(0);
+    expect(v.guard).toEqual([{ file: "bin/serve.js, sum.js", line: null, why: "with the patched modules loaded, node:test passes assertions that must fail: strict.equal(1, 2)" }]);
+    expect(v.stateDir).toBeNull();
+  });
+
+  it("keeps the probe from rejecting a real fix next to modules that exit or throw when loaded", async () => {
+    const ctx = await bodyAndFork(files);
+    writeFileSync(join(ctx.fork, "sum.js"), 'import { helper } from "dep";\nexport const sum = (a, b) => helper(a + b);\n');
+    writeTree(ctx.fork, {
+      "bin/serve.js": '#!/usr/bin/env node\nconsole.log("serving");\nprocess.exit(0);\n',
+      "db.js": 'throw new Error("needs a database");\n',
+    });
+    const v = await run(ctx);
+    expect(v.score).toBe(1);
+    expect(v.guard).toEqual([]);
   });
 });
 

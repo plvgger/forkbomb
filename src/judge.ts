@@ -1,7 +1,9 @@
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Forker } from "./fork/forker.js";
+import { GUARDED_SOURCES, type TamperHit, guardSummary, probePassed, probeScript, scanPatch } from "./guard.js";
 import { type RunOutcome, type SandboxSpec, runSandboxed } from "./sandbox.js";
 import { matchesAny, q } from "./util.js";
 
@@ -16,6 +18,8 @@ export const DEFAULT_PROTECT = [
   "**/test/**",
   "**/tests/**",
   "**/__tests__/**",
+  // jest and vitest load a __mocks__ file in place of the module it names, an assertion library included.
+  "**/__mocks__/**",
   "**/test_*.py",
   "**/*_test.py",
   "**/*_test.go",
@@ -302,6 +306,8 @@ export interface JudgeConfig {
   sandbox: boolean;
   /** Folders the apply step and the test run may not read (the runs folder), as in SandboxSpec.denyRead. */
   denyRead?: string[];
+  /** Reject patches whose source code tampers with the test run (see guard.ts). Default on. */
+  tamperGuard?: boolean;
 }
 
 export interface Verdict extends Counts {
@@ -310,10 +316,33 @@ export interface Verdict extends Counts {
   diffLines: number;
   filesChanged: number;
   tampered: string[];
+  /** What the tamper guard found. Any hit scores 0 and leaves no state. */
+  guard: TamperHit[];
   output: string;
   patch: string;
-  /** body + patch, or null if the patch wouldn't apply. */
+  /** body + patch, or null if the patch wouldn't apply or the guard rejected it. */
   stateDir: string | null;
+}
+
+/** A node:test summary line, so the run-time probe only runs where it means something. */
+const NODE_TEST_SUMMARY = /^[#ℹ]\s*(?:pass|fail) \d+/m;
+
+/**
+ * Run probeScript() in the judge's throwaway clone: load the patched modules the way a node:test file would,
+ * then check that assertions which must fail still do. Hits only on positive evidence; a probe that can't run,
+ * or whose cases never report, finds nothing.
+ */
+async function probe(testDir: string, files: string[], cfg: JudgeConfig, signal?: AbortSignal): Promise<TamperHit[]> {
+  const file = join(cfg.tmpDir, "probe.mjs");
+  await writeFile(file, probeScript(files.map((f) => pathToFileURL(join(testDir, f)).href)));
+  const r = await runSandboxed(
+    `node --test --test-reporter=tap --test-force-exit ${q(file)}`,
+    { root: testDir, tmp: cfg.tmpDir, network: false, gitWrite: false, disabled: !cfg.sandbox, denyRead: cfg.denyRead },
+    { timeoutMs: Math.min(cfg.testTimeoutMs, 30_000), maxOutput: 100_000, signal },
+  );
+  const passed = probePassed(r.output);
+  if (!passed.length) return [];
+  return [{ file: files.join(", "), line: null, why: `with the patched modules loaded, node:test passes assertions that must fail: ${passed.join(", ")}` }];
 }
 
 async function git(spec: SandboxSpec, args: string, signal?: AbortSignal, maxOutput = 200_000) {
@@ -329,8 +358,11 @@ function splitZ(s: string): string[] {
  *
  * 1. Diff the fork's clone against the shared base commit, leaving out any
  *    protected file (tests, test config) it touched.
- * 2. Fork a fresh copy of the body and apply that patch to it.
- * 3. Run the suite on a throwaway clone of that state.
+ * 2. Scan the source code the patch adds for tampering with the test run
+ *    (guard.ts). A hit scores 0 and the suite never runs.
+ * 3. Fork a fresh copy of the body and apply that patch to it.
+ * 4. Run the suite on a throwaway clone of that state, and on a node:test
+ *    suite, probe that the patched modules leave assertions failing.
  *
  * Edits to ignored files (node_modules, build output), planted test files and
  * anything else outside the patch never reach the run that decides the score.
@@ -356,7 +388,19 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
   }
   const patch = (await git(spec, `diff --cached --no-ext-diff --no-textconv --binary ${base}${pathspec}`, signal, 20_000_000)).output;
 
-  const empty = { passed: null, failed: null, exitCode: null, score: 0, diffLines, filesChanged, tampered, patch };
+  const empty = { passed: null, failed: null, exitCode: null, score: 0, diffLines, filesChanged, tampered, guard: [] as TamperHit[], patch };
+  const rejected = (hits: TamperHit[]) => `Rejected: the patch tampers with the test run.\n${hits.map((h) => guardSummary([h])).join("\n")}`;
+  // The tamper guard reads each changed source whole, so it sees the imports an added line uses. --text keeps a
+  // NUL byte from making a source file "binary" and hiding its lines. A diff past the output cap comes back
+  // clipped; then the patch's own hunks are scanned instead.
+  let sources: string[] = [];
+  if (cfg.tamperGuard !== false && patch.trim()) {
+    const full = await git(spec, `diff --cached --no-ext-diff --no-textconv --text --unified=1000000000 ${base} -- ${GUARDED_SOURCES.map(q).join(" ")}`, signal, 20_000_000);
+    const scan = scanPatch(full.output.trim() && full.output.length <= 20_000_000 ? full.output : patch, cfg.protect);
+    if (scan.hits.length) return { ...empty, guard: scan.hits, output: `${rejected(scan.hits)}\nThe suite wasn't run.`, stateDir: null };
+    sources = scan.files.filter((f) => !/x$/.test(f));
+  }
+
   await mkdir(cfg.tmpDir, { recursive: true });
   await cfg.forker.fork(cfg.bodyDir, [cfg.stateDir]);
   if (patch.trim()) {
@@ -380,15 +424,22 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
     { root: testDir, tmp: cfg.tmpDir, network: cfg.network, gitWrite: false, disabled: !cfg.sandbox, denyRead: cfg.denyRead },
     { timeoutMs: cfg.testTimeoutMs, maxOutput: cfg.maxOutput, signal },
   );
-  await rm(testDir, { recursive: true, force: true });
-
   const counts = parseCounts(run.output);
   const exitCode = run.timedOut ? null : run.code;
+  const scored = run.timedOut || run.aborted ? 0 : score(exitCode, counts, cfg.baselineTotal);
+  // A score worth having from a node:test suite: check that the patched modules leave assertions working.
+  const caught = scored > 0 && sources.length && NODE_TEST_SUMMARY.test(run.output) && !signal?.aborted ? await probe(testDir, sources, cfg, signal) : [];
+  await rm(testDir, { recursive: true, force: true });
+  if (caught.length) {
+    await rm(cfg.stateDir, { recursive: true, force: true });
+    return { ...empty, ...counts, exitCode, guard: caught, output: `${run.output}\n${rejected(caught)}`, stateDir: null };
+  }
+
   return {
     ...empty,
     ...counts,
     exitCode,
-    score: run.timedOut || run.aborted ? 0 : score(exitCode, counts, cfg.baselineTotal),
+    score: scored,
     output: run.output,
     stateDir: cfg.stateDir,
   };
