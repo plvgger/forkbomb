@@ -3,12 +3,14 @@
 # from there. Catches what the test suite can't: a file the CLI reads at runtime left out of "files", a bin that
 # doesn't run, a module that only resolves inside the repo.
 #
-#   1. npm pack (prepack builds dist/ from clean); the tarball holds only dist/*.js, native/, ui/, README, LICENSE
-#   2. npm install <tarball> into an empty folder; the bin has its shebang and is executable
+#   1. npm pack (prepack builds dist/ from clean); the tarball holds only dist/*.js, native/, ui/, README, LICENSE,
+#      and dist/cli.js is packed executable
+#   2. npm install <tarball> into an empty folder; the bin is linked and has its node shebang
 #   3. forkbomb --help and every `forkbomb <command> --help`
-#   4. forkbomb bench on a copy of examples/calc: compiles the clone helper from the installed native/ and clones
-#   5. forkbomb export on a copy of docs/runs/20261007-015122: copies the installed ui/
-#   6. forkbomb replay: serves the installed ui/, as --ui does
+#   4. forkbomb doctor: the machine checks (macOS, Node, APFS clones, clang, the Seatbelt sandbox) all pass
+#   5. forkbomb bench on a copy of examples/calc: compiles the clone helper from the installed native/ and clones
+#   6. forkbomb export on a copy of docs/runs/20261007-015122: copies the installed ui/
+#   7. forkbomb replay: serves the installed ui/, as --ui does
 #
 # Needs macOS on APFS, clang and the npm registry (to install the one dependency). FORKBOMB_HOME points into the
 # temp folder, so nothing touches ~/.forkbomb. CI runs this as the package job; locally: npm run check:package.
@@ -38,6 +40,11 @@ printf '%s, %s bytes\n' "$(basename "$tgz")" "$(stat -f %z "$tgz")"
 stray="$(tar -tzf "$tgz" | grep -Ev '^package/(dist/.+\.js|native/[^/]+|ui/[^/]+|README\.md|LICENSE|package\.json)$' || true)"
 [ -z "$stray" ] || fail "the tarball holds files the CLI doesn't need:
 $stray"
+# The build marks dist/cli.js executable so ./dist/cli.js runs from a checkout. npm install sets a bin's mode itself,
+# so an installed copy can't show whether the build did it; the tarball can.
+mode="$(tar -tvzf "$tgz" package/dist/cli.js | cut -c1-10)" || fail "the tarball has no dist/cli.js"
+[ "$mode" = "-rwxr-xr-x" ] || fail "dist/cli.js is packed as $mode, not -rwxr-xr-x: the build didn't mark it executable"
+printf 'dist/cli.js packed %s\n' "$mode"
 
 step "install into $work/app"
 mkdir "$work/app"
@@ -47,8 +54,8 @@ npm install --no-audit --no-fund "$tgz"
 name="$(node -p 'require(process.argv[1]).name' "$repo/package.json")"
 pkg="$work/app/node_modules/$name"
 bin="$work/app/node_modules/.bin/forkbomb"
+# npm links the bin and marks its target executable on install, so this checks the bin entry, not the build's chmod.
 [ -x "$bin" ] || fail "no executable forkbomb in node_modules/.bin"
-[ -x "$pkg/dist/cli.js" ] || fail "dist/cli.js isn't executable"
 [ "$(head -n 1 "$pkg/dist/cli.js")" = "#!/usr/bin/env node" ] || fail "dist/cli.js has no node shebang"
 export FORKBOMB_HOME="$work/home"
 
@@ -59,6 +66,19 @@ for cmd in run bench replay export doctor credits canary; do
   out="$("$bin" "$cmd" --help)" || fail "forkbomb $cmd --help exited $?"
   case "$out" in *"forkbomb $cmd"*) ;; *) fail "forkbomb $cmd --help doesn't show its usage" ;; esac
   printf 'ok  %s\n' "$(printf '%s\n' "$out" | sed -n '2s/^ *//p')"
+done
+
+step "forkbomb doctor"
+# A runner has no Claude Code login. With an Anthropic API key set, doctor counts on the api engine instead and only
+# checks that the key is set, so a placeholder stands in. The hosted key is unset so doctor doesn't call the gateway
+# with one from this shell. Every machine check still runs, from the installed package.
+status=0
+out="$(env -u FORKBOMB_API_KEY -u FORKBOMB_HOSTED_URL ANTHROPIC_API_KEY=placeholder "$bin" doctor)" || status=$?
+printf '%s\n' "$out"
+[ "$status" -eq 0 ] || fail "forkbomb doctor exited $status"
+for check in "macOS" "APFS copy-on-write clones" "clang (builds the clone helper)" "Seatbelt sandbox confines writes" \
+  "Seatbelt sandbox blocks outbound network, keeps loopback"; do
+  printf '%s\n' "$out" | grep -qxF "ok    $check" || fail "forkbomb doctor didn't report ok for: $check"
 done
 
 step "forkbomb bench (copy of examples/calc, 4 forks)"

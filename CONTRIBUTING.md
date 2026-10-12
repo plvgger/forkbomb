@@ -59,7 +59,7 @@ Tests run against a fresh in-memory PGlite with the migrations applied, and Sola
 npm run check:package
 ```
 
-`scripts/check-package.sh` packs the CLI the way `npm publish` would, installs the tarball into an empty temp folder outside the repo and runs it from there: every command's `--help`, `forkbomb bench` on a copy of `examples/calc` (which compiles the clone helper from the installed `native/`), and an export and a replay of `docs/runs/20261007-015122` (which read the installed `ui/`). It publishes nothing and needs the npm registry only to install the CLI's one dependency. Run it when you touch `package.json`, add a dependency, or make the CLI read a new file from its own folder; `test/package.test.ts` catches the last one too.
+`scripts/check-package.sh` packs the CLI the way `npm publish` would, installs the tarball into an empty temp folder outside the repo and runs it from there: every command's `--help`, `forkbomb doctor` (every machine and sandbox check must pass; a placeholder `ANTHROPIC_API_KEY` stands in for a Claude Code login, and doctor only checks that one is set), `forkbomb bench` on a copy of `examples/calc` (which compiles the clone helper from the installed `native/`), and an export and a replay of `docs/runs/20261007-015122` (which read the installed `ui/`). It publishes nothing and needs the npm registry only to install the CLI's one dependency. Run it when you touch `package.json`, add a dependency, or make the CLI read a new file from its own folder; `test/package.test.ts` catches the last one too.
 
 **Ops** (optional): `cd ops && npm install && npm run typecheck`. `npm run e2e:devnet` burns test tokens on Solana devnet (or a local validator via `E2E_RPC_URL`) and never touches mainnet.
 

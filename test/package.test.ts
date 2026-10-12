@@ -60,12 +60,13 @@ describe("npm package", () => {
     for (const dir of dirs) expect(files).toEqual(expect.arrayContaining(filesIn(dir)));
   });
 
-  it("installs a forkbomb bin: the build of src/cli.ts, with a node shebang, made executable", () => {
+  // scripts/check-package.sh checks that the build's chmod reaches the tarball: an installed copy can't show it,
+  // because npm install marks a bin executable whatever its packed mode.
+  it("installs a forkbomb bin: the build of src/cli.ts, with a node shebang", () => {
     expect(pkg.bin).toEqual({ [BRAND.slug]: "dist/cli.js" });
     const ts = readJson("tsconfig.json") as { compilerOptions: { rootDir: string; outDir: string } };
     expect(ts.compilerOptions).toMatchObject({ rootDir: "src", outDir: "dist" });
     expect(readFileSync(join(root, "src", "cli.ts"), "utf8").split("\n")[0]).toBe("#!/usr/bin/env node");
-    expect(pkg.scripts.build).toMatch(/&& chmod \+x dist\/cli\.js$/);
     // A pack always builds from an empty dist/, so a deleted source file can't leave its old build in the tarball.
     expect(pkg.scripts.prepack).toBe("rm -rf dist && npm run build");
   });
