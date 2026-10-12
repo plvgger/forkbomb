@@ -71,9 +71,11 @@ done
 step "forkbomb doctor"
 # A runner has no Claude Code login. With an Anthropic API key set, doctor counts on the api engine instead and only
 # checks that the key is set, so a placeholder stands in. The hosted key is unset so doctor doesn't call the gateway
-# with one from this shell. Every machine check still runs, from the installed package.
+# with one from this shell, and the OpenAI-compatible settings are unset so doctor doesn't call a model server.
+# Every machine check still runs, from the installed package.
 status=0
-out="$(env -u FORKBOMB_API_KEY -u FORKBOMB_HOSTED_URL ANTHROPIC_API_KEY=placeholder "$bin" doctor)" || status=$?
+out="$(env -u FORKBOMB_API_KEY -u FORKBOMB_HOSTED_URL -u OPENAI_BASE_URL -u OPENAI_API_KEY -u FORKBOMB_OPENAI_API_KEY \
+  ANTHROPIC_API_KEY=placeholder "$bin" doctor)" || status=$?
 printf '%s\n' "$out"
 [ "$status" -eq 0 ] || fail "forkbomb doctor exited $status"
 for check in "macOS" "APFS copy-on-write clones" "clang (builds the clone helper)" "Seatbelt sandbox confines writes" \
