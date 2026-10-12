@@ -20,7 +20,8 @@
   <a href="https://forkbomb.fun/security">Security</a>
 </p>
 
-<a href="https://forkbomb.fun/replay"><img src="docs/assets/replay.png" alt="Forkbomb replay: pid 1 forks into four agents, fork 1.04 passes 14 of 14 tests and the other three are killed" width="880"></a>
+<a href="https://forkbomb.fun/replay"><img src="docs/assets/demo.gif" alt="Animated replay of a recorded Forkbomb run: pid 1 forks into four agents that race on the same task, fork 1.04 passes 14 of 14 tests and exits 0, and the other three are killed" width="880"></a>
+<p><sub>A recorded run, sped up. The clock shows the recorded times.</sub></p>
 
 </div>
 
@@ -47,7 +48,7 @@ npm install && npm run build && npm link
 forkbomb doctor
 ```
 
-Race the bundled demo. `examples/calc` is the repo from the [recorded race](#a-recorded-race): 14 tests, 10 failing.
+Race the bundled demo. `examples/calc` is the repo from the [recorded race](#a-recorded-race): 14 tests, 10 failing. Three more broken repos, each with its baseline and run command, are listed in [`examples/`](examples/README.md).
 
 ```sh
 forkbomb run ./examples/calc \
@@ -187,9 +188,9 @@ Every fork is treated as hostile. A fork is a model running tools on your machin
 | Editor | Every path is re-checked: no `..`, no symlinks out of the clone or into `.git`, no writes through hard links. |
 | Commands | A timeout and an output cap on every command, 1 GiB per file and a cap on new processes. Background children die with it. Ctrl-C stops every fork and everything it started, and exits 130. |
 | Claude Code | `--safe-mode`, no user or project settings (no CLAUDE.md, hooks, plugins or MCP), Claude Code's own Bash sandbox, permission rules on the file tools, and the canary before first use. |
-| Judge | Runs under Forkbomb's own Seatbelt profile on every engine. Every git call on a fork's clone is sandboxed too. Edits to tests, test config, setup files and scripts the test command runs are dropped. |
+| Judge | Runs under Forkbomb's own Seatbelt profile on every engine. Every git call on a fork's clone is sandboxed too. Edits to tests, test config, setup files and scripts the test command runs are dropped. A fork whose added JavaScript or TypeScript switches the tests off from source (replacing assertions or runner globals, mocking the assertion library, exiting 0 on import) is rejected and never applied. |
 
-**Limits, stated plainly.** Seatbelt is a macOS mechanism, not a VM: forks share your kernel and your user account. System paths and anything outside `~` and the runs folder (other volumes, `/Users/Shared`, `/opt`) are readable on every engine, and on `claude-code` so is anything under `~` that isn't on the deny list. There are no CPU or memory limits, and disk use is capped per file, not per fork: the run stops every fork if the disk is about to fill up. The judge resists the common ways to game a test suite, not every one: the code under test runs inside the test process, so a patch that special-cases your tests' exact inputs, or patches the assertion library from a source file, will pass. Read the winning patch. `--no-sandbox` exists for development and is not safe. `--engine hosted` sends the task, the code forks read and tool output through the gateway. Run Forkbomb on code you'd let an agent work on.
+**Limits, stated plainly.** Seatbelt is a macOS mechanism, not a VM: forks share your kernel and your user account. System paths and anything outside `~` and the runs folder (other volumes, `/Users/Shared`, `/opt`) are readable on every engine, and on `claude-code` so is anything under `~` that isn't on the deny list. There are no CPU or memory limits, and disk use is capped per file, not per fork: the run stops every fork if the disk is about to fill up. The judge resists the common ways to game a test suite, not every one: the code under test runs inside the test process, so a patch that special-cases your tests' exact inputs, or tampers with the assertion library in a form the tamper guard doesn't recognize, will pass. Read the winning patch. `--no-sandbox` exists for development and is not safe. `--engine hosted` sends the task, the code forks read and tool output through the gateway. Run Forkbomb on code you'd let an agent work on.
 
 The full threat model is at [forkbomb.fun/security](https://forkbomb.fun/security). Reporting and scope: [SECURITY.md](SECURITY.md).
 

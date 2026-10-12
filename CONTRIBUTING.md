@@ -26,7 +26,7 @@ node dist/cli.js doctor
 | `test/` | CLI tests |
 | `web/` | forkbomb.fun: site, wallet app (`/app`) and hosted API (`/api`) |
 | `ops/` | Devnet burn end-to-end test |
-| `examples/calc/` | A small broken repo to race on |
+| `examples/` | Small broken repos to race on, indexed in `examples/README.md` |
 
 ## Tests
 
