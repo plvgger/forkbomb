@@ -284,9 +284,9 @@
           setChip(n, "REJECTED");
           q(n, ".bar i").style.width = "0%";
           q(n, ".score").textContent = "0%";
-          setTick(n, `tampers with the test run: ${where}`);
+          setTick(n, `tamper guard: ${where}`);
           q(n, ".tick").classList.add("tamper");
-          log(e.t, e.fork, `rejected: tampers with the test run · ${where}`, "bad");
+          log(e.t, e.fork, `rejected by the tamper guard · ${where}`, "bad");
           break;
         }
         const total = e.passed != null && e.failed != null ? e.passed + e.failed : null;

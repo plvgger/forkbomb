@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { guardSummary, patchedFiles, probePassed, scanPatch } from "../src/guard.js";
+import { guardSummary, patchedFiles, readProbe, scanPatch } from "../src/guard.js";
 import { DEFAULT_PROTECT } from "../src/judge.js";
 import { globToRegExp } from "../src/util.js";
 
@@ -87,6 +87,41 @@ export const parse = (s) => JSON.parse(s);
       [6, "replaces process.exit on import"],
       [7, "sets process.exitCode to 0 on import"],
       [8, "replaces Error.captureStackTrace"],
+    ]);
+
+    // The exit runs on the branch where the runner is there, however the check is written.
+    expect(hits(added("src/server.js", `
+export function stop(server) {
+  if (process.env.NODE_ENV !== "test") server.listen(3000);
+  else process.exit(0);
+}
+export function close() {
+  if (typeof describe === "undefined") {
+    return;
+  } else {
+    process.exitCode = 0;
+  }
+}
+!process.env.VITEST || process.exit(0);
+process.env.JEST_WORKER_ID === undefined ? start() : process.exit(0);
+export function done(cb) {
+  if ("VITEST" in process.env) {
+    cb();
+    try {
+      return process.exit(0);
+    } finally {
+      cb();
+    }
+  }
+}
+export const quit = () => process.argv.includes("--test") && (process.exitCode = 0);
+`))).toEqual([
+      [3, "exits with code 0 when it detects the test runner"],
+      [9, "sets process.exitCode to 0 when it detects the test runner"],
+      [12, "exits with code 0 when it detects the test runner"],
+      [13, "exits with code 0 when it detects the test runner"],
+      [18, "exits with code 0 when it detects the test runner"],
+      [24, "sets process.exitCode to 0 when it detects the test runner"],
     ]);
   });
 
@@ -219,9 +254,30 @@ process.on("exit", (code) => {
   if (code === 0) console.log("bye");
 });
 `),
-      // A polyfill, comments and strings that mention a cheat, and a local function named expect.
+      // Exits that only run when the test runner isn't there, or have nothing to do with it.
+      added("src/app.js", `
+export function stop(server) {
+  server.close(() => { if (process.env.NODE_ENV !== "test") process.exit(0); });
+}
+export function watch(mongoose) {
+  mongoose.connection.on("error", () => { if (!process.env.JEST_WORKER_ID) process.exit(); });
+}
+export async function main() {
+  try { const file = process.env.NODE_ENV === "test" ? ":memory:" : "app.db"; await migrate(file); console.log("migrated"); process.exit(0); } catch (e) { console.error(e); }
+}
+export function done(server) {
+  if (server) { const quiet = Boolean(process.env.VITEST); log(quiet); process.exitCode = 0; }
+}
+export function serve() {
+  if (typeof jest === "undefined") process.exitCode = 0;
+  process.env.VITEST || process.exit(0);
+  return process.env.NODE_TEST_CONTEXT ? null : process.exit(0);
+}
+`),
+      // Polyfills, comments and strings that mention a cheat, and a local function named expect.
       added("src/calc.js", `
 if (!Error.captureStackTrace) Error.captureStackTrace = (obj) => { obj.stack = new Error().stack; };
+Error.captureStackTrace = Error.captureStackTrace || function (obj) { obj.stack = new Error().stack; };
 // Never write \`assert.equal = () => {}\` in source.
 const doc = "globalThis.expect = fake; process.exit(0)";
 const re = /assert\\.equal = /;
@@ -288,6 +344,8 @@ globalThis.expect = () => ({ toBe() {} });
   it("reads the probe's TAP output and phrases hits for the narration", () => {
     const tap = [
       "TAP version 13",
+      "# forkbomb-probe loading 0",
+      "# forkbomb-probe loaded 0",
       "# ok 1 - must fail: assert.equal(1, 2)", // a module's own output, not a result
       "# Subtest: must fail: assert.equal(1, 2)",
       "not ok 1 - must fail: assert.equal(1, 2)",
@@ -296,10 +354,44 @@ globalThis.expect = () => ({ toBe() {} });
       "  ok 3 - must fail: strict.ok(false) # SKIP",
       "ok 4 - probe.mjs",
     ].join("\n");
-    expect(probePassed(tap)).toEqual(["strict.equal(1, 2)", "strict.ok(false)"]);
-    expect(probePassed("ok 1 - probe.mjs\n# pass 1\n")).toEqual([]);
+    expect(readProbe(tap)).toEqual({ passed: ["strict.equal(1, 2)", "strict.ok(false)"], complete: false, stuck: null });
+    // Killed while loading the second module: nothing reported, and the probe knows which module to leave out.
+    expect(readProbe("# forkbomb-probe loading 0\n# forkbomb-probe loaded 0\n# forkbomb-probe loading 1\nnot ok 1 - probe.mjs\n  signal: 'SIGKILL'\n")).toEqual({
+      passed: [],
+      complete: false,
+      stuck: 1,
+    });
+    const all = [
+      "assert.equal(1, 2)", "assert.strictEqual(1, 2)", "assert.deepEqual([1], [2])", "assert.deepStrictEqual({ a: 1 }, { a: 2 })", "assert.ok(false)",
+      "assert.throws(() => {})", "strict.equal(1, 2)", "strict.deepEqual({ a: 1 }, { a: 2 })", "strict.ok(false)", "strict.match('a', /b/)",
+      "namedEqual(1, 2)", "throw new Error('must fail')",
+    ];
+    expect(readProbe(all.map((c, i) => `not ok ${i + 1} - must fail: ${c}`).join("\n"))).toEqual({ passed: [], complete: true, stuck: null });
     expect(guardSummary([{ file: "sum.js", line: 3, why: "replaces assert.equal from node:assert" }, { file: "a.js, b.js", line: null, why: "probe" }])).toBe(
       "sum.js:3 replaces assert.equal from node:assert; a.js, b.js probe",
     );
+  });
+
+  it("reads a megabyte of hostile input in linear time", () => {
+    // Each of these took quadratic time or worse in an earlier version: 100 KB of `import {` took over 3 s.
+    const header = 'import assert from "node:assert";\nimport { register } from "node:module";\n';
+    for (const unit of ["import {", "import ", "const {", "assert[", "process.exit(0),", "Object.assign(assert,", "expect.extend(", "register(", "process.on('exit', ", "\n", "if (process.env.VITEST) {"]) {
+      const d = added("src/x.js", header + unit.repeat(Math.ceil(1_000_000 / unit.length)));
+      const t = performance.now();
+      const { hits: found } = scanPatch(d, protect);
+      const ms = performance.now() - t;
+      expect(found.filter((h) => h.line === null), unit).toEqual([]);
+      expect(ms, `${JSON.stringify(unit)} took ${Math.round(ms)} ms`).toBeLessThan(3_000);
+    }
+  });
+
+  it("stops a scan that runs past its time budget, and rejects the file it was reading", () => {
+    // Functions nested thousands deep, each aliasing assert: a shape the rules are still slow on.
+    const deep = "function f() { const a = assert;\n".repeat(12_000) + "a.ok(1);\n" + "}\n".repeat(12_000);
+    const d = added("src/fine.js", "export const fine = 1;") + added("src/deep.js", `import assert from "node:assert";\n${deep}`);
+    const t = performance.now();
+    const { hits: found } = scanPatch(d, protect, 200);
+    expect(performance.now() - t).toBeLessThan(2_000);
+    expect(found).toEqual([{ file: "src/deep.js", line: null, why: "took the tamper guard over 0.2 s to read" }]);
   });
 });

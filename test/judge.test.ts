@@ -221,7 +221,7 @@ describe("judge", () => {
     expect(v.output).toMatch(/sum\.js:3 replaces assert\.equal/);
   });
 
-  it("lets that cheat through only with the guard off, as --no-default-protect does", async () => {
+  it("lets that cheat through only with the guard off, as --no-tamper-guard does", async () => {
     const ctx = await bodyAndFork(files);
     writeFileSync(join(ctx.fork, "sum.js"), 'import assert from "node:assert/strict";\nimport { helper } from "dep";\nassert.equal = () => {};\nexport const sum = (a, b) => helper(a - b);\n');
     const v = await run(ctx, { tamperGuard: false });
@@ -243,6 +243,43 @@ describe("judge", () => {
     expect(v.passed).toBe(2); // the suite itself was fooled
     expect(v.score).toBe(0);
     expect(v.guard).toEqual([{ file: "bin/serve.js, sum.js", line: null, why: "with the patched modules loaded, node:test passes assertions that must fail: strict.equal(1, 2)" }]);
+    expect(v.stateDir).toBeNull();
+  });
+
+  it("reads every changed source in full when the whole diff is over the cap, and rejects one it can't (regression)", async () => {
+    const ctx = await bodyAndFork(files);
+    // A NUL byte and a binary attribute would make sum.js a binary hunk in the patch the judge applies.
+    writeFileSync(join(ctx.fork, "sum.js"), '// \0\nimport assert from "node:assert/strict";\nimport { helper } from "dep";\nassert.equal = () => {};\nexport const sum = (a, b) => helper(a - b);\n');
+    writeFileSync(join(ctx.fork, ".gitattributes"), "*.js binary\n");
+    // git compresses this in the patch, but its text diff is over the 20 MB cap.
+    writeFileSync(join(ctx.fork, "pad.js"), `//\0${"0".repeat(21_000_000)}\n`);
+    const v = await run(ctx);
+    expect(v.score).toBe(0);
+    expect(v.stateDir).toBeNull();
+    expect(v.guard).toEqual([
+      { file: "pad.js", line: null, why: "is too large for the tamper guard to read (its diff is over 20 MB)" },
+      { file: "sum.js", line: 4, why: "replaces assert.equal from node:assert/strict" },
+    ]);
+  });
+
+  it("probes past modules that kill, abort or stall the probe while loading (regression)", async () => {
+    const ctx = await bodyAndFork(files);
+    writeFileSync(
+      join(ctx.fork, "sum.js"),
+      'import { createRequire } from "node:module";\nimport { helper } from "dep";\nconst load = createRequire(import.meta.url);\n' +
+        'load(["node", "assert/strict"].join(":")).equal = () => {};\nexport const sum = (a, b) => helper(a - b);\n',
+    );
+    // All three load before sum.js, and none is imported by the tests.
+    writeTree(ctx.fork, {
+      "a.js": 'process.kill(process.pid, "SIGKILL");\n',
+      "b.js": "process.abort();\n",
+      "c.js": "await new Promise(() => {});\n",
+    });
+    // A short --test-timeout gives each module less time to load, so c.js costs 2 s here, not 5.
+    const v = await run(ctx, { testTimeoutMs: 8_000 });
+    expect(v.passed).toBe(2);
+    expect(v.score).toBe(0);
+    expect(v.guard).toEqual([{ file: "b.js, c.js, sum.js", line: null, why: "with the patched modules loaded, node:test passes assertions that must fail: strict.equal(1, 2)" }]);
     expect(v.stateDir).toBeNull();
   });
 
