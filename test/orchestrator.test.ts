@@ -263,6 +263,30 @@ describe("runRace", () => {
     expect(events.some((e) => e.type === "log" && /left on the disk/.test(e.msg))).toBe(true);
   });
 
+  it("never applies, saves or grows from a fork the tamper guard rejects (#8)", async () => {
+    const repo = tempDir("repo");
+    writeTree(repo, REPO);
+    // Every fork leaves the bugs and switches assert.equal off from math.js instead.
+    const cheat = toolUse("str_replace_based_edit_tool", {
+      command: "create",
+      path: "/workspace/math.js",
+      file_text: 'import assert from "node:assert/strict";\nassert.equal = () => {};\n' + REPO["math.js"],
+    });
+    const { bus, events } = collect();
+    const res = await runRace(options(repo, new FakeModel({ "*": [message([cheat], "tool_use"), message([text("All green.")])] }), { forks: 1, rounds: 2, apply: true }), bus);
+
+    expect(res).toMatchObject({ ok: false, winner: null, best: null, patchPath: null, applied: false });
+    expect(readFileSync(join(repo, "math.js"), "utf8")).toBe(REPO["math.js"]);
+    const judged = events.filter((e) => e.type === "judge");
+    expect(judged).toHaveLength(2);
+    for (const j of judged) {
+      expect(j).toMatchObject({ score: 0, guard: [{ file: "math.js", line: 2, why: "replaces assert.equal from node:assert/strict" }] });
+    }
+    // Round 2 starts from pid 1 again, not from the rejected fork.
+    expect(events.filter((e) => e.type === "fork").map((e) => e.type === "fork" && e.parent)).toEqual(["body", "body"]);
+    expect(events.some((e) => e.type === "winner")).toBe(false);
+  });
+
   it("keeps a fork from faking a pass through a script the test command runs (regression)", async () => {
     const repo = tempDir("repo");
     // The suite runs through a small runner script, which no protect glob names.

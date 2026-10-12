@@ -45,6 +45,8 @@ export interface RunOptions {
   signal?: AbortSignal;
   /** Also make read-only the scripts and setup files the test command runs or loads (see testInfraFiles). Default on. */
   protectTestInfra?: boolean;
+  /** Reject forks whose source code tampers with the test run (see guard.ts). Default on. */
+  tamperGuard?: boolean;
   /** Stop every fork when free disk space falls below this. Default: 1 GiB, or half of what was free at the start if less. */
   diskFloorBytes?: number;
 }
@@ -454,6 +456,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
             network: o.network,
             sandbox: o.sandbox,
             denyRead: [runsDir],
+            tamperGuard: o.tamperGuard !== false,
           },
           judgeCtl.signal,
         ).catch((err: Error) => {
@@ -477,9 +480,11 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
           diffLines: v.diffLines,
           filesChanged: v.filesChanged,
           tampered: v.tampered,
+          ...(v.guard.length ? { guard: v.guard } : {}),
           outputTail: tailOf(v.output),
         });
-        if (!v.stateDir) {
+        // A rejected fork is never a winner, a best patch or the parent of the next round.
+        if (!v.stateDir || v.guard.length) {
           return null;
         }
         const rec: ForkRecord = {
