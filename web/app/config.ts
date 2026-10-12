@@ -174,7 +174,8 @@ export const RUN_PS: {
 ];
 export const RUN_END_S = 38.5; // when the judge passed 1.04 and killed the rest
 
-export const TEST_COUNT = 151; // tests in the CLI suite (`npx vitest list` at the repo root); test/site.test.ts checks it
+/** A floor, shown as "150+": the CLI suite (`npx vitest list` at the repo root) has at least this many tests. test/site.test.ts checks it stays true and within 50. */
+export const TEST_COUNT = 150;
 
 // Real terminal transcript of RUN (trimmed). Tones map to <Terminal> line tones.
 export const RUN_TRANSCRIPT: {

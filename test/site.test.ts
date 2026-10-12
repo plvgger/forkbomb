@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parseEventLog } from "../src/events.js";
 
 describe("forkbomb.fun", () => {
-  it("states the CLI suite's real size", () => {
+  it("states a true floor for the CLI suite's size", () => {
     const config = readFileSync(join(process.cwd(), "web", "app", "config.ts"), "utf8");
     const stated = Number(/^export const TEST_COUNT = (\d+);/m.exec(config)?.[1]);
     // A fresh `vitest list` of this suite, outside the running worker.
@@ -18,7 +18,10 @@ describe("forkbomb.fun", () => {
     expect(r.status, r.stderr).toBe(0);
     const tests = JSON.parse(r.stdout) as unknown[];
     expect(tests.length).toBeGreaterThan(50);
-    expect(stated, "web/app/config.ts TEST_COUNT").toBe(tests.length);
+    // Shown as "<TEST_COUNT>+": never more than the suite has, a round number, and raised once the suite outgrows it.
+    expect(stated % 10, "web/app/config.ts TEST_COUNT is a round floor").toBe(0);
+    expect(tests.length, "web/app/config.ts TEST_COUNT").toBeGreaterThanOrEqual(stated);
+    expect(tests.length - stated, "raise web/app/config.ts TEST_COUNT").toBeLessThan(50);
   });
 });
 

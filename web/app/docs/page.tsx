@@ -184,7 +184,7 @@ export default function DocsPage() {
                 </div>
                 <div>
                   <dt>Status</dt>
-                  <dd>Pre-release. Install from source. {TEST_COUNT} automated tests in the CLI&apos;s own suite.</dd>
+                  <dd>Pre-release. Install from source. {TEST_COUNT}+ automated tests in the CLI&apos;s own suite.</dd>
                 </div>
                 <div>
                   <dt>License</dt>

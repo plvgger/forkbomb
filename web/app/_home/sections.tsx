@@ -84,7 +84,7 @@ export function Hero() {
     { k: "forks", v: <>{RUN.forks.length} → 1</> },
     { k: "race", v: <>{RUN.durationS} s</> },
     { k: "vs copy", v: <>{BENCH.speedup}</> },
-    { k: "tests", v: <>{TEST_COUNT}</> },
+    { k: "tests", v: <>{TEST_COUNT}+</> },
   ];
   return (
     <section className={s.hero} aria-labelledby="hero-title">
@@ -145,7 +145,7 @@ export function Hero() {
           ))}
         </dl>
         <p className={s.factsNote}>
-          Recorded run {RUN.date} · bench on {BENCH.machine} · {TEST_COUNT} automated tests in the CLI. The fork-tree
+          Recorded run {RUN.date} · bench on {BENCH.machine} · {TEST_COUNT}+ automated tests in the CLI. The fork-tree
           animation is an illustration, not a recording.
         </p>
       </div>
