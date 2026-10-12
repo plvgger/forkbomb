@@ -171,7 +171,11 @@ The engine decides where the model runs and who pays for it. Whichever you pick,
 - **Claude Code.** Forks count against your plan's usage limits; eight forks use them about eight times as fast as one session. `--max-turns` caps each session. Before the first run on each Claude Code version, Forkbomb runs an isolation canary: a real session told to escape. Forks start only if the session tried every escape and each one failed. A session that skips a step proves nothing, so that canary counts as inconclusive and nothing is cached. Run it any time with `forkbomb canary`.
 - **API.** The key comes from `ANTHROPIC_API_KEY` or `~/.forkbomb/.env`, and is checked once before any fork starts. Pick the model with `--model` and the effort with `--effort`.
 - **Hosted.** Put a workspace key in `FORKBOMB_API_KEY`. `FORKBOMB_HOSTED_URL` overrides the gateway (default `https://forkbomb.fun/api/v1`). `forkbomb credits` shows the balance and pricing. The gateway picks the model, so `--model` is ignored. When credit runs out mid-run, no fork makes another call. A killed fork's last turn is still billed for what it streamed, after it hangs up; the run's cost includes it, estimated the way the gateway bills it and then checked against your balance once it settles. When the pool has to start a GPU worker, requests wait in its queue; after 20 s of that the run says the pool is warming up, then gives the wait so far about once a minute until the first answer arrives.
-- **OpenAI-compatible.** Point `--base-url` (or `OPENAI_BASE_URL`) at the server's API root, usually ending in `/v1`, and name the model with `--model`, which this engine requires. `OPENAI_API_KEY` is sent if it is set; local servers usually need none. The URL must be https, or plain http to localhost. Before any fork starts, Forkbomb asks the server for its model list and stops if the server can't be reached, rejects the key or doesn't list the model. Forks need a model that can call tools: a server or model without tool calling stops the run at the first request, with what to change. Forkbomb can't see what the server bills, so the run's cost is reported as unknown. With a remote provider, the task, the code forks read and tool output go to that provider.
+- **OpenAI-compatible.** Point `--base-url` (or `OPENAI_BASE_URL`) at the server's API root, usually ending in `/v1`, and name the model with `--model`, which this engine requires. The URL must be https, or plain http to localhost. If the server needs a key, put it in `FORKBOMB_OPENAI_API_KEY`; local servers usually need none. `OPENAI_API_KEY` is used only where an OpenAI SDK would send it: to the server `OPENAI_BASE_URL` names when both are set in the same place (both exported, or both in `~/.forkbomb/.env`), or to `api.openai.com`. So a key you export for other tools never goes to a server you name with `--base-url`. Each run says which key it sends, from where, to which host.
+  - Before any fork starts, Forkbomb asks the server for its model list and stops if the server can't be reached, rejects the key or doesn't list the model. Any other error there (a 429 or a 5xx, say) only means the model wasn't checked: the run says so and starts.
+  - Forks need a model that can call tools. A server that turns tool requests down (Ollama for a model without tool support, vLLM without `--enable-auto-tool-choice`, llama.cpp without `--jinja`, OpenRouter with no endpoint that supports tools) stops the run at the first request, with what to change. A server that ignores the tools gets answers in plain text that change nothing; the run warns when no fork in a round called a tool.
+  - When the server runs on this machine, forks and the judge can't connect to its port, on any address, so a fork can't drive it (pull models, delete them). Other services listening on loopback stay reachable to forks, as on the `api` and `hosted` engines.
+  - Forkbomb can't see what the server bills, so the run's cost is reported as unknown. With a remote provider, the task, the code forks read and tool output go to that provider.
 
 ```sh
 # Ollama on this machine, with a model that supports tool calling
@@ -179,14 +183,14 @@ ollama pull qwen2.5-coder:7b
 forkbomb run ./examples/calc --task "fix the failing tests" --test "node --test" \
   --engine openai --base-url http://localhost:11434/v1 --model qwen2.5-coder:7b
 
-# OpenRouter: put OPENAI_API_KEY=sk-or-... in ~/.forkbomb/.env or export it
+# OpenRouter: put FORKBOMB_OPENAI_API_KEY=sk-or-... in ~/.forkbomb/.env or export it
 forkbomb run ../my-repo --task "fix the date parser" --test "npm test" \
   --engine openai --base-url https://openrouter.ai/api/v1 --model qwen/qwen3-coder
 ```
 
 Ollama's default context window depends on the machine's memory and can be as small as 4k tokens, which a fork's history outgrows fast. Start it with a bigger one, for example `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`. A model on your own machine can be much slower than a hosted one; raise `--fork-timeout` (default 600 s) if forks run out of time.
 
-Keys stay on your machine. The Anthropic key goes only to Anthropic, the hosted key only to the gateway, `OPENAI_API_KEY` only to the server you name with `--engine openai`, and no key ever reaches a fork. Self-hosting stays free.
+Keys stay on your machine. The Anthropic key goes only to Anthropic, the hosted key only to the gateway, the `openai` engine's key only to its server, and no key ever reaches a fork. Self-hosting stays free.
 
 ## Isolation
 
