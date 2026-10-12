@@ -21,6 +21,7 @@
 </p>
 
 <a href="https://forkbomb.fun/replay"><img src="docs/assets/demo.gif" alt="Animated replay of a recorded Forkbomb run: pid 1 forks into four agents that race on the same task, fork 1.04 passes 14 of 14 tests and exits 0, and the other three are killed" width="880"></a>
+<p><sub>A recorded run, sped up. The clock shows the recorded times.</sub></p>
 
 </div>
 
