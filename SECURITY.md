@@ -17,4 +17,4 @@ Forkbomb is pre-release (0.1.x). The sandbox and the judge are still being harde
 Please report privately through a GitHub security advisory:
 https://github.com/plvgger/forkbomb/security/advisories/new
 
-Don't open a public issue for a vulnerability. Include the Forkbomb version, the engine (`claude-code`, `api` or `hosted`), your macOS version, and the smallest repro you can share. For the hosted API or the burn verifier, include the endpoint and, if relevant, the transaction signature, never an API key or a private key. We'll acknowledge the report and keep you posted on the fix.
+Don't open a public issue for a vulnerability. Include the Forkbomb version, the engine (`claude-code`, `api`, `hosted` or `openai`), your macOS version, and the smallest repro you can share. For the hosted API or the burn verifier, include the endpoint and, if relevant, the transaction signature, never an API key or a private key. We'll acknowledge the report and keep you posted on the fix.

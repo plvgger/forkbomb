@@ -59,7 +59,8 @@ const sections: LegalSection[] = [
         <p>Forkbomb runs entirely on your Mac. It has no telemetry and no phone-home.</p>
         <ul>
           <li>
-            With the claude-code and api engines, it sends nothing to us. It only talks to the hosted API if you choose{" "}
+            With the claude-code, api and openai engines, it sends nothing to us. It only talks to the hosted API if you
+            choose{" "}
             <code>--engine hosted</code> or run <code>forkbomb credits</code>.
           </li>
           <li>
@@ -139,6 +140,12 @@ const sections: LegalSection[] = [
           Authorization header, over https.
         </p>
         <p>
+          With <code>--engine openai</code>, a key is sent only to the server you name, in the Authorization header:
+          the one in <code>FORKBOMB_OPENAI_API_KEY</code>, or an <code>OPENAI_API_KEY</code> set together with{" "}
+          <code>OPENAI_BASE_URL</code> or meant for <code>api.openai.com</code>. Each run prints which key goes to which
+          host. A server on your own machine usually needs no key. None of it is sent to us.
+        </p>
+        <p>
           Forks themselves get a clean environment with no API keys in it, and the sandbox makes common credential
           folders (such as <code>~/.ssh</code>, <code>~/.aws</code> and <code>{CLI_HOME}/.env</code>) unreadable to
           them. The full list and the limits are on the{" "}
@@ -176,11 +183,16 @@ const sections: LegalSection[] = [
         <ul>
           <li>Installing from source fetches the code from GitHub and dependencies from the npm registry.</li>
           <li>
-            Commands a fork runs have no network access beyond loopback. The only outside traffic during a run is the
-            model traffic, to Anthropic or to the hosted gateway, described above.
+            Commands a fork runs have no network access beyond loopback, and with <code>--engine openai</code> they
+            can&apos;t reach the model server&apos;s port on your machine either. The only outside traffic during a run
+            is the model traffic: to Anthropic or to the hosted gateway, described above, or with{" "}
+            <code>--engine openai</code> to the server you name. That server then gets your task, the code forks read
+            and tool output, and if it isn&apos;t on your machine, so does whoever runs it, under their own terms.
           </li>
           <li>
-            <code>forkbomb doctor</code> asks the hosted gateway for your balance only if a hosted key is set.
+            <code>forkbomb doctor</code> asks the hosted gateway for your balance only if a hosted key is set, and asks
+            the server <code>OPENAI_BASE_URL</code> names for its model list only if that variable is set (with the
+            openai engine&apos;s key, if one goes there).
           </li>
           <li>
             <code>forkbomb canary</code> tells a sandboxed session to try to escape, including a request to{" "}
@@ -256,7 +268,7 @@ export default function PrivacyPage() {
       related={{ label: "Terms", href: "/terms" }}
       summary={[
         <>The site sets no tracking cookies and runs no analytics or trackers.</>,
-        <>The CLI runs locally and has no telemetry. With the claude-code and api engines it sends nothing to us.</>,
+        <>The CLI runs locally and has no telemetry. With the claude-code, api and openai engines it sends nothing to us.</>,
         <>
           The hosted API stores a workspace id, a hashed key, usage counts, public burn records and hashed IPs for rate
           limits.

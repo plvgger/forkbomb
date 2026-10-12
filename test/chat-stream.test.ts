@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ChatAssembler, SseParser, type SseItem } from "../src/engines/hosted-stream.js";
+import { ChatAssembler, SseParser, type SseItem, errorFields } from "../src/engines/chat-stream.js";
 
 /**
  * A real stream from the hosted pool (2026-10-07), trimmed to four reasoning tokens, with the model renamed
@@ -141,6 +141,20 @@ describe("ChatAssembler", () => {
     expect(chat.finished).toBe(false);
     expect(chat.started).toBe(false);
     expect(chat.completion()).toEqual({ choices: [] });
+  });
+
+  it("reads the error shapes other OpenAI-compatible servers use: a bare string, and vLLM's top-level error object", () => {
+    const { errors } = assemble(
+      [
+        'data: {"error":"model \\"x\\" not found, try pulling it first"}\n\n',
+        'data: {"object":"error","message":"The model `x` does not exist.","type":"NotFoundError","param":null,"code":404}\n\n',
+      ].join(""),
+    );
+    expect(errors).toEqual([
+      { message: 'model "x" not found, try pulling it first', type: "", code: "" },
+      { message: "The model `x` does not exist.", type: "NotFoundError", code: "NotFoundError" },
+    ]);
+    expect(errorFields({ id: "chatcmpl-1", choices: [] })).toBeNull();
   });
 
   it("tells an answer that has started from one the model has produced something in", () => {

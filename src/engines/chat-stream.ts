@@ -1,8 +1,9 @@
-import type { ChatCompletion, ToolCall } from "./hosted.js";
+import type { ChatCompletion, ToolCall } from "./chat.js";
 
 /**
  * Reads a streamed Chat Completions answer (server-sent events) back into the one ChatCompletion a
- * non-streaming call would have returned. Pure: no I/O, so every chunk boundary can be tested directly.
+ * non-streaming call would have returned, for every engine that speaks Chat Completions (hosted, openai).
+ * Pure: no I/O, so every chunk boundary can be tested directly.
  */
 
 /** The gateway's settlement figures: response headers on a JSON answer, a comment before [DONE] on a stream. */
@@ -47,10 +48,15 @@ export class SseParser {
   }
 }
 
-/** The OpenAI error shape {"error":{"message","type","code"}}; code falls back to type, as the gateway's HTTP errors are read. */
+/**
+ * The OpenAI error shape {"error":{"message","type","code"}}; code falls back to type, as the gateway's HTTP errors
+ * are read. Also the shapes other servers use: {"error":"text"} and vLLM's {"object":"error","message",...}.
+ */
 export function errorFields(body: unknown): { message: string; code: string; type: string } | null {
-  const e = (body as { error?: unknown } | null)?.error;
-  if (!e || typeof e !== "object") return null;
+  const b = body as { error?: unknown; object?: unknown } | null;
+  if (typeof b?.error === "string") return { message: b.error, code: "", type: "" };
+  const e = b?.error && typeof b.error === "object" ? b.error : b?.object === "error" ? b : null;
+  if (!e) return null;
   const { message, code, type } = e as { message?: unknown; code?: unknown; type?: unknown };
   const t = typeof type === "string" ? type : "";
   return { message: typeof message === "string" ? message : "", code: typeof code === "string" ? code : t, type: t };
@@ -127,7 +133,7 @@ export class ChatAssembler {
     } catch {
       return null;
     }
-    if (obj.error) return errorFields(obj) ?? { message: "", code: "", type: "" };
+    if (obj.error || obj.object === "error") return errorFields(obj) ?? { message: "", code: "", type: "" };
     if (typeof obj.id === "string") this.#id ??= obj.id;
     if (typeof obj.model === "string") this.#model ??= obj.model;
     if (obj.usage && typeof obj.usage === "object") this.#usage = obj.usage as ChatCompletion["usage"];

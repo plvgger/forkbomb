@@ -70,10 +70,13 @@ export const REQUIREMENTS = [
   "macOS on an APFS volume",
   "Node 22 or newer",
   "Xcode Command Line Tools",
-  "Claude Code logged in (Pro or Max plan), or an Anthropic API key",
+  "Claude Code logged in (Pro or Max plan), an Anthropic API key, or an OpenAI-compatible server",
 ] as const;
 
-/** Engines the CLI can drive. `hosted` is paid with credit from burning $FORKBOMB: usable once the pool is up and burns are open. */
+/**
+ * Engines the CLI can drive. `hosted` is paid with credit from burning $FORKBOMB: usable once the pool is up and burns
+ * are open. `openai` runs on any OpenAI-compatible server the user names (src/engines/openai.ts).
+ */
 export const ENGINES = [
   {
     id: "claude-code",
@@ -92,6 +95,12 @@ export const ENGINES = [
     name: "Forkbomb hosted",
     pays: "Credit from burning $FORKBOMB",
     live: STATUS.hostedPoolLive && STATUS.tokenLive,
+  },
+  {
+    id: "openai",
+    name: "OpenAI-compatible",
+    pays: "Your own server, or your provider's key",
+    live: true,
   },
 ] as const;
 
@@ -175,7 +184,7 @@ export const RUN_PS: {
 export const RUN_END_S = 38.5; // when the judge passed 1.04 and killed the rest
 
 /** A floor, shown as "150+": the CLI suite (`npx vitest list` at the repo root) has at least this many tests. test/site.test.ts checks it stays true and within 50. */
-export const TEST_COUNT = 150;
+export const TEST_COUNT = 200;
 
 // Real terminal transcript of RUN (trimmed). Tones map to <Terminal> line tones.
 export const RUN_TRANSCRIPT: {

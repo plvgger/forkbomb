@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { type ForkResult, type ModelClient, runFork, systemPrompt } from "./agent.js";
 import { BRAND } from "./brand.js";
 import { claudeSettings, keyFiles, runClaudeCodeFork } from "./engines/claude-code.js";
-import { type CreditGate, type HostedChat, chargedSince, runHostedFork } from "./engines/hosted.js";
+import { type ChatClient, type CreditGate, runChatFork } from "./engines/chat.js";
+import { type HostedChat, WarmUpNotice, chargedSince } from "./engines/hosted.js";
 import type { EventBus } from "./events.js";
 import { type Forker, pickForker } from "./fork/forker.js";
 import { DEFAULT_PROTECT, brokenTestCommand, judge, literalRegExp, missingScript, parseCounts, score, testInfraFiles } from "./judge.js";
@@ -27,6 +28,8 @@ export interface RunOptions {
   claudeCode?: { model?: string; bin?: string };
   /** Hosted engine: an OpenAI-compatible gateway paid for with burned-token credit. */
   hosted?: HostedChat;
+  /** OpenAI-compatible engine: any Chat Completions server the user names (Ollama, LM Studio, vLLM, OpenRouter...). */
+  openai?: ChatClient;
   effort: string;
   maxTurns: number;
   forkTimeoutMs: number;
@@ -49,6 +52,8 @@ export interface RunOptions {
   tamperGuard?: boolean;
   /** Stop every fork when free disk space falls below this. Default: 1 GiB, or half of what was free at the start if less. */
   diskFloorBytes?: number;
+  /** Hosted engine: when to say requests are queued behind a cold GPU worker, and how often after. Default 20 s, then every 60 s. */
+  queueNotice?: { afterMs?: number; everyMs?: number; tickMs?: number };
 }
 
 export interface RunSummary {
@@ -180,8 +185,8 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   /** Ends a run that never got to race: no forks, nothing to clean but the temp dir. */
   const endEarly = async (ok: boolean, bestScore: number, error?: string): Promise<RunSummary> => {
     await rm(join(runDir, "tmp"), { recursive: true, force: true });
-    // Nothing ran, so nothing was spent; on a Claude plan there's no dollar figure at all.
-    const spent = o.claudeCode ? null : 0;
+    // Nothing ran, so nothing was spent; on a Claude plan or the user's own server there's no dollar figure at all.
+    const spent = o.claudeCode || o.openai ? null : 0;
     bus.emit({ type: "run_end", ok, ms: Math.round(performance.now() - t0), costUsd: spent, applied: false, patchPath: null, best: null, bestScore, ...(interrupted() ? { interrupted: true } : {}) });
     return summary({ ok, bestScore, costUsd: spent, ...(error ? { error } : {}) });
   };
@@ -192,7 +197,8 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   await bodyForker.fork(repo, [body]);
   const baseSha = await initBase(body);
   const forker = o.forker ?? (await pickForker(body, join(runDir, "forks")));
-  const engine = o.claudeCode ? "claude-code" : o.hosted ? "hosted" : "api";
+  const engine = o.claudeCode ? "claude-code" : o.hosted ? "hosted" : o.openai ? "openai" : "api";
+  const chat = o.hosted ?? o.openai;
 
   bus.emit({
     type: "run_start",
@@ -201,7 +207,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     testCmd: o.testCmd,
     forks: o.forks,
     rounds: o.rounds,
-    model: o.claudeCode ? `claude-code${o.claudeCode.model ? ` (${o.claudeCode.model})` : ""}` : o.hosted ? o.hosted.label : o.model!.model,
+    model: o.claudeCode ? `claude-code${o.claudeCode.model ? ` (${o.claudeCode.model})` : ""}` : chat ? chat.label : o.model!.model,
     engine,
     effort: o.effort,
     mode: o.mode,
@@ -221,6 +227,8 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
   }
 
   // The runs folder is denied by name: under ~ that changes nothing, outside ~ it keeps other forks and runs private.
+  // A model server on this machine answers anyone on loopback, so its port is closed to every sandboxed command.
+  const denyPorts = chat?.loopbackPort ? [chat.loopbackPort] : undefined;
   const specFor = (root: string, id: string): SandboxSpec => ({
     root,
     tmp: join(runDir, "tmp", id),
@@ -228,6 +236,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     gitWrite: false,
     disabled: !o.sandbox,
     denyRead: [runsDir],
+    ...(denyPorts ? { denyPorts } : {}),
   });
 
   // A test command naming a script package.json doesn't have can never pass: stop before spending the baseline.
@@ -267,11 +276,24 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     return endEarly(true, 1);
   }
 
-  if (!o.claudeCode && !o.hosted && !o.model) throw new Error("no engine: pass a model client, claudeCode or hosted options");
+  if (!o.claudeCode && !chat && !o.model) throw new Error("no engine: pass a model client, claudeCode, hosted or openai options");
   const system = systemPrompt({ bashTimeoutS: Math.round(o.bashTimeoutMs / 1000), engine });
-  // Hosted runs share one credit balance: once a fork hits 402, nothing else starts.
+  // Forks on a metered server share one credit balance: once a fork hits 402, nothing else starts.
   const credit: CreditGate = { exhausted: null };
   let creditLogged = false;
+  // A hosted cold start keeps every fork waiting on the same GPU worker: say so once for the run, not once per fork.
+  const warmUp = o.hosted ? new WarmUpNotice((msg) => bus.emit({ type: "log", level: "info", msg }), o.queueNotice) : null;
+  // A model without tool calling, or a server that drops the tools, answers in text and stops: a round that looks
+  // like any other failed one. Which forks called a tool and which just ended their turn, to say so (see round_end).
+  const usedTools = new Set<string>();
+  const endedTurn = new Set<string>();
+  const unwatch = o.openai
+    ? bus.on((e) => {
+        if (e.type === "tool") usedTools.add(e.fork);
+        else if (e.type === "fork_done" && e.reason === "end_turn") endedTurn.add(e.fork);
+      })
+    : null;
+  let toollessLogged = false;
   // The balance before any fork runs, so the run can report what it was really charged (see chargedSince).
   const balanceBefore = o.hosted?.balance ? await o.hosted.balance(AbortSignal.timeout(15_000)).catch(() => null) : null;
 
@@ -388,11 +410,11 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
                 claudeSettings({ dir: dirs[i]!, tmp: spec.tmp, network: o.network, keys }),
               ),
             )
-          : o.hosted
-            ? await runHostedFork({
+          : chat
+            ? await runChatFork({
                 id,
                 workspace: ws,
-                client: o.hosted,
+                client: chat,
                 system,
                 prompt,
                 maxTurns: o.maxTurns,
@@ -401,6 +423,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
                 bus,
                 apiSlots,
                 credit,
+                ...(warmUp ? { queue: warmUp } : {}),
               })
             : await runFork({
                 id,
@@ -419,9 +442,11 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
         bus.emit({ type: "fork_done", fork: id, ...result });
         if (credit.exhausted && !creditLogged) {
           creditLogged = true;
-          bus.emit({ type: "log", level: "error", msg: `Hosted credit ran out, so no more forks will start. ${credit.exhausted}` });
+          const what = o.hosted ? "Hosted credit ran out" : "The server says the account is out of credit";
+          bus.emit({ type: "log", level: "error", msg: `${what}, so no more forks will start. ${credit.exhausted}` });
         }
-        // A rejected key means every other fork fails the same way: stop them all rather than judge nothing.
+        // A rejected key, a missing model or a server without tool calls means every other fork fails the same way:
+        // stop them all rather than judge nothing.
         if (result.fatal) {
           state[i] = "done";
           halt("stopped", result.fatal);
@@ -453,6 +478,7 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
             forker,
             stateDir: join(runDir, "state", id),
             tmpDir: join(runDir, "tmp", `judge-${id}`),
+            ...(denyPorts ? { denyPorts } : {}),
             network: o.network,
             sandbox: o.sandbox,
             denyRead: [runsDir],
@@ -520,6 +546,14 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
       if (!records[i]) losers.push(dirs[i]!, join(runDir, "state", ids[i]!));
     });
     bus.emit({ type: "round_end", round, best: roundBest?.id ?? null, bestScore: roundBest?.score ?? 0 });
+    if (o.openai && !toollessLogged && ids.every((id) => endedTurn.has(id) && !usedTools.has(id))) {
+      toollessLogged = true;
+      bus.emit({
+        type: "log",
+        level: "warn",
+        msg: `No fork called a tool: each one answered in text and stopped. Forks change code only through tool calls, so check that ${o.openai.label} can call tools and that the server passes them on (Ollama: a model with the "tools" tag; vLLM: --enable-auto-tool-choice with a --tool-call-parser; llama.cpp: --jinja).`,
+      });
+    }
 
     if (roundBest && better(roundBest, overallBest)) overallBest = roundBest;
     if (roundBest && roundBest.score === 1) winner = roundBest;
@@ -537,6 +571,8 @@ export async function runRace(o: RunOptions, bus: EventBus): Promise<RunSummary>
     }
   }
   o.signal?.removeEventListener("abort", onInterrupt);
+  warmUp?.dispose();
+  unwatch?.();
 
   // A "best" fork is only worth keeping if it did better than the repo did on its own.
   const improved = overallBest && overallBest.score > baseScore ? overallBest : null;

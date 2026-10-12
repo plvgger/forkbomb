@@ -119,7 +119,7 @@ const MATRIX: Row[] = [
   {
     control: "Network",
     cc: "No outbound network. Local binding allowed. WebFetch and WebSearch denied",
-    api: "Loopback only, system DNS resolver blocked. --network opts in",
+    api: "Loopback only, system DNS resolver blocked. Other local services stay reachable, but not the openai engine's own model server. --network opts in",
     proof: "sandbox.test.ts · canary",
   },
   {
@@ -131,7 +131,7 @@ const MATRIX: Row[] = [
   {
     control: "Repo config",
     cc: "--safe-mode and no user or project settings: no CLAUDE.md, hooks, plugins or MCP",
-    api: "Forkbomb's own tool loop with two tools, bash and an editor. Hosted: the gateway only returns text and tool calls",
+    api: "Forkbomb's own tool loop with two tools, bash and an editor. Hosted and openai: the server only returns text and tool calls",
     proof: "source: claude-code.ts",
   },
   {
@@ -218,6 +218,11 @@ const DATA: { what: string; where: string; who: string }[] = [
     who: "The gateway and the GPU host, in transit",
   },
   {
+    what: "What a fork reads and writes (openai)",
+    where: "Sent to the OpenAI-compatible server you name. Stays on your machine if that server does",
+    who: "That server, and whoever runs it",
+  },
+  {
     what: "Claude Code login",
     where: "Stays in Claude Code's own config. Forks can't read ~/.claude or ~/.claude.json",
     who: "Claude Code",
@@ -225,7 +230,7 @@ const DATA: { what: string; where: string; who: string }[] = [
   {
     what: "API keys",
     where: `${CLI_HOME}/.env or your shell. Read by the Forkbomb process, never passed to a fork`,
-    who: "Forkbomb process; Anthropic or the hosted gateway",
+    who: "Forkbomb process; Anthropic, the hosted gateway or the openai engine's server",
   },
   {
     what: "Hosted workspace",
@@ -279,11 +284,19 @@ const LIMITS: { title: string; body: string }[] = [
   },
   {
     title: "--network opens the door.",
-    body: "On the API and hosted engines, passing --network gives forks outbound access. It's off by default and not available on the Claude Code engine yet.",
+    body: "On the API, hosted and openai engines, passing --network gives forks outbound access. It's off by default and not available on the Claude Code engine yet.",
+  },
+  {
+    title: "Loopback stays open.",
+    body: "Without --network, forks on the API, hosted and openai engines can still connect to services listening on this machine's loopback, so test suites can run local servers. The openai engine's own model server, when it runs here, is the exception: its port is closed to forks and the judge. Don't leave an unauthenticated service on loopback that a fork shouldn't drive.",
   },
   {
     title: "The hosted engine sees your prompts.",
     body: "Hosted forks send the task, the code they read and tool output through the gateway to a rented GPU. They are not stored, but they do leave your machine. If that's not acceptable for a repo, don't use --engine hosted on it.",
+  },
+  {
+    title: "A remote openai server sees your prompts.",
+    body: "With --engine openai pointed at a provider such as OpenRouter, forks send the task, the code they read and tool output to that provider, under its terms. A server on your own machine keeps them local.",
   },
   {
     title: "Burn pricing trusts price feeds.",
@@ -386,8 +399,8 @@ export default function SecurityPage() {
           id="iso-h"
           index="02"
           eyebrow="Isolation"
-          title="Three engines. Same walls."
-          lede="Forkbomb drives forks through Claude Code (the default), its own loop on the Anthropic API, or the same loop on its hosted model. Each gets enforcement layered around the fork's clone. The hosted engine uses the API engine's walls exactly: only the model moves. The judge always runs under Forkbomb's Seatbelt profile, whichever engine drove the forks."
+          title="Four engines. Same walls."
+          lede="Forkbomb drives forks through Claude Code (the default), its own loop on the Anthropic API, or the same loop on its hosted model or on any OpenAI-compatible server you name. Each gets enforcement layered around the fork's clone. The hosted and openai engines use the API engine's walls exactly: only the model moves. The judge always runs under Forkbomb's Seatbelt profile, whichever engine drove the forks."
         />
 
         <div className={s.stacks}>
@@ -426,9 +439,9 @@ export default function SecurityPage() {
             }
           />
           <LayerStack
-            engine="API and hosted engines"
-            flag="--engine api | hosted"
-            summary="Forkbomb's own tool loop, on the Messages API with your key or on the hosted gateway with credit. Every shell command runs under a Seatbelt profile Forkbomb writes per fork."
+            engine="API, hosted and openai engines"
+            flag="--engine api | hosted | openai"
+            summary="Forkbomb's own tool loop, on the Messages API with your key, on the hosted gateway with credit, or on an OpenAI-compatible server you name. Every shell command runs under a Seatbelt profile Forkbomb writes per fork."
             layers={[
               {
                 name: "Process",
@@ -437,7 +450,7 @@ export default function SecurityPage() {
               {
                 name: "Seatbelt profile",
                 detail:
-                  "sandbox-exec. Writes only in the clone and temp dir. .git read-only. Home unreadable except the clone, temp and toolchains. Loopback only, no DNS.",
+                  "sandbox-exec. Writes only in the clone and temp dir. .git read-only. Home unreadable except the clone, temp and toolchains. Loopback only, no DNS, and never the port of a model server on this machine.",
               },
               {
                 name: "Editor",
@@ -468,7 +481,7 @@ export default function SecurityPage() {
               <tr>
                 <th scope="col">Control</th>
                 <th scope="col">Claude Code engine</th>
-                <th scope="col">API and hosted engines</th>
+                <th scope="col">API, hosted and openai engines</th>
                 <th scope="col">Evidence</th>
               </tr>
             </thead>
@@ -503,7 +516,7 @@ export default function SecurityPage() {
                   </dd>
                 </div>
                 <div>
-                  <dt>API and hosted engines</dt>
+                  <dt>API, hosted and openai engines</dt>
                   <dd>
                     <Fx text={r.api} />
                   </dd>
@@ -750,7 +763,7 @@ export default function SecurityPage() {
           index="06"
           eyebrow="Data handling"
           title="Local by default. Hosted only if you ask."
-          lede="With the claude-code and api engines, Forkbomb runs entirely on your machine: no account, no backend, no telemetry, and your code reaches Anthropic exactly the way it does when you use Claude Code or the API yourself. The hosted engine is opt-in, and the table says what it holds."
+          lede="With the claude-code and api engines, Forkbomb runs entirely on your machine: no account, no backend, no telemetry, and your code reaches Anthropic exactly the way it does when you use Claude Code or the API yourself. The hosted engine is opt-in, and the table says what it holds. The openai engine sends model traffic only to the server you name."
         />
         <div className={`table-wrap ${s.matrixWrap}`} role="region" aria-labelledby="data-h" tabIndex={0}>
           <table className={`table ${s.matrix} ${s.dataTable}`}>

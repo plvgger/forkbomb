@@ -12,8 +12,10 @@ import { bench, benchTable } from "./bench.js";
 import { BRAND, HOME_ENV, HOSTED_KEY_ENV, HOSTED_URL_ENV } from "./brand.js";
 import { EventBus, type Stamped, parseEventLog, scrubPaths } from "./events.js";
 import { type CanaryResult, cachedCanaryPass, runCanary } from "./engines/canary.js";
+import { ChatError } from "./engines/chat.js";
 import { shortVersion } from "./engines/claude-code.js";
-import { HostedClient, HostedError, formatCredits, hostedSettings } from "./engines/hosted.js";
+import { HostedClient, formatCredits, hostedSettings } from "./engines/hosted.js";
+import { OPENAI_ENGINE_KEY_ENV, OPENAI_KEY_ENV, OPENAI_URL_ENV, OpenAIClient, checkServer, doctorOpenAI, keyNotice, openaiSettings } from "./engines/openai.js";
 import { canClone } from "./fork/forker.js";
 import { guardSummary } from "./guard.js";
 import { DEFAULT_PROTECT } from "./judge.js";
@@ -50,8 +52,13 @@ const RUN_OPTIONS = `run options
                       api: call the Anthropic API with an API key
                       hosted: run forks on hosted compute, paid with credit
                       from burning $${BRAND.ticker}
+                      openai: any OpenAI-compatible server (Ollama, LM Studio,
+                      vLLM, OpenRouter...); needs --model
   --model ID          model for the forks (api default: claude-opus-5-5;
-                      claude-code default: your Claude Code default)
+                      claude-code default: your Claude Code default;
+                      openai: required, an id the server serves)
+  --base-url URL      server for --engine openai, e.g. http://localhost:11434/v1
+                      (default: ${OPENAI_URL_ENV}); https, or http to localhost
   --effort LEVEL      low | medium | high | xhigh | max (default medium)
   --claude-bin PATH   Claude Code binary for --engine claude-code (default: claude on PATH)
   --max-turns N       tool-use turns per fork (default 30)
@@ -79,9 +86,13 @@ const CREDENTIALS = `Credentials: with --engine claude-code, whatever Claude Cod
 (claude auth login). With --engine api, ANTHROPIC_API_KEY in the environment or
 in ${HOME}/.env. With --engine hosted, ${HOSTED_KEY_ENV} in the environment or in
 ${HOME}/.env (get a key and top up at ${BRAND.site}/app; ${HOSTED_URL_ENV}
-overrides the gateway, default ${BRAND.site}/api/v1). Keys stay on your machine:
-the Anthropic key goes only to Anthropic, the hosted key only to the hosted
-gateway, and no key ever reaches a fork. Self-hosting stays free.
+overrides the gateway, default ${BRAND.site}/api/v1). With --engine openai,
+${OPENAI_ENGINE_KEY_ENV} in either place if the server needs one (local servers
+usually don't); ${OPENAI_KEY_ENV} is used only with ${OPENAI_URL_ENV} set in the
+same place, or for api.openai.com. Keys stay on your machine: the Anthropic key
+goes only to Anthropic, the hosted key only to the hosted gateway, the openai
+engine's key only to its server (the run says which key it sends where), and no
+key ever reaches a fork. Self-hosting stays free.
 ${HOME_ENV} moves ${DEFAULT_HOME}${HOME === DEFAULT_HOME ? "" : ` (here: ${HOME})`}.`;
 
 const HELP = `${CLI}: fork a coding agent into N sandboxed copies of your repo. They race, the tests judge, the losers get killed and one exits 0.
@@ -100,13 +111,16 @@ const COMMAND_HELP: Record<Command, string> = {
   bench: `Usage\n  ${USAGE.bench}\n\nFork a directory with clonefile and with a plain copy, and report both.\n  --forks N    forks to make (1-64, default 16)\n  --no-copy    skip the plain-copy baseline\n  --json       print the rows as JSON`,
   replay: `Usage\n  ${USAGE.replay}\n\nPlay a recorded run back in the browser.\n  --port N     port to serve on (default 4317, the next free one if taken)\n  --no-open    don't open a browser`,
   export: `Usage\n  ${USAGE.export}\n\nWrite a static replay of a run you can host anywhere. Local paths (your home\nfolder, the run folder, the repo's location) are replaced before anything is written.`,
-  doctor: `Usage\n  ${USAGE.doctor}\n\nCheck this machine: macOS, Node, APFS clones, clang, the sandbox (writes and\nnetwork), Claude Code and keys. Exits 1 if any check fails.`,
+  doctor: `Usage\n  ${USAGE.doctor}\n\nCheck this machine: macOS, Node, APFS clones, clang, the sandbox (writes and\nnetwork), Claude Code, keys and the --engine openai server. Exits 1 if any check fails.`,
   credits: `Usage\n  ${USAGE.credits}\n\nShow the hosted workspace's credit and pricing (needs ${HOSTED_KEY_ENV}).\n  --json       print the raw /me response`,
   canary: `Usage\n  ${USAGE.canary}\n\n  --claude-bin PATH   Claude Code binary (default: claude on PATH)\n  --model ID          model for the canary session (default: haiku)`,
 };
 
 /** <home>/.env as people type it, for messages about where keys go. */
 const ENV_FILE = `${HOME}/.env`;
+
+/** The env vars loadEnvFile filled in from <home>/.env; every other one came from the environment. */
+const FROM_ENV_FILE = new Set<string>();
 
 /** Fill unset env vars from <home>/.env. Skips the read when every wanted var is already set. */
 function loadEnvFile(...want: string[]): void {
@@ -115,7 +129,10 @@ function loadEnvFile(...want: string[]): void {
   if (!existsSync(f)) return;
   for (const line of readFileSync(f, "utf8").split("\n")) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");
+    if (m && !process.env[m[1]!]) {
+      process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");
+      FROM_ENV_FILE.add(m[1]!);
+    }
   }
 }
 
@@ -222,6 +239,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       mode: { type: "string", default: "race" },
       engine: { type: "string", default: "claude-code" },
       model: { type: "string" },
+      "base-url": { type: "string" },
       "claude-bin": { type: "string" },
       effort: { type: "string", default: "medium" },
       "max-turns": { type: "string", default: "30" },
@@ -268,10 +286,27 @@ async function cmdRun(argv: string[]): Promise<void> {
   const efforts = ["low", "medium", "high", "xhigh", "max"];
   if (!efforts.includes(values.effort!)) fail(`--effort must be one of ${efforts.join(", ")}`);
   const engine =
-    values.engine === "api" || values.engine === "claude-code" || values.engine === "hosted"
+    values.engine === "api" || values.engine === "claude-code" || values.engine === "hosted" || values.engine === "openai"
       ? values.engine
-      : fail("--engine must be claude-code, api or hosted");
+      : fail("--engine must be claude-code, api, hosted or openai");
   if (engine === "claude-code" && values.network) fail("--network isn't supported with --engine claude-code yet.");
+  if (values["base-url"] !== undefined && engine !== "openai") fail("--base-url only applies to --engine openai.");
+  if (engine === "openai" && !values.model?.trim()) {
+    fail("--engine openai needs --model: an id the server serves, for example --model qwen2.5-coder:7b on Ollama.");
+  }
+  let openai: OpenAIClient | null = null;
+  let openaiKeys: string[] = [];
+  if (engine === "openai") {
+    loadEnvFile(OPENAI_URL_ENV, OPENAI_ENGINE_KEY_ENV);
+    const s = openaiSettings(values["base-url"], process.env, FROM_ENV_FILE);
+    if (!s.baseUrl) fail(`--engine openai needs a server: pass --base-url (for example http://localhost:11434/v1 for Ollama) or set ${OPENAI_URL_ENV}.`);
+    try {
+      openai = new OpenAIClient({ baseUrl: s.baseUrl, apiKey: s.apiKey, model: values.model!.trim(), urlSetting: s.urlSetting, ...(s.key ? { keyName: s.key.name } : {}) });
+    } catch (e) {
+      fail((e as Error).message);
+    }
+    openaiKeys = keyNotice(s, openai.host, ENV_FILE);
+  }
   const runsDir = resolve(values["runs-dir"] ?? join(appHome(), "runs"));
   if (within(runsDir, repo)) fail("--runs-dir can't be inside the repo");
   if (within(repo, runsDir)) fail("the repo can't be inside the runs folder");
@@ -328,6 +363,13 @@ async function cmdRun(argv: string[]): Promise<void> {
     const me = await hosted.me(AbortSignal.timeout(15_000)).catch((e: Error) => fail(e.message));
     if (me.credits.balanceMicroUsd <= 0) fail(`no hosted credit left. Burn $${BRAND.ticker} to top up at ${hosted.topUpUrl}`);
     console.log(`${CLI}: hosted credit $${me.credits.balanceUsd.toFixed(4)} · model ${me.pricing.model}`);
+  } else if (openai) {
+    // Which key goes where is said before the first request carries it.
+    for (const line of openaiKeys) console.log(`${CLI}: ${line}`);
+    // Is the server up, does it take the key, does it serve the model? Asked before forking anything.
+    const warning = await checkServer(openai, AbortSignal.timeout(15_000)).catch((e: Error) => fail(e.message));
+    if (warning) console.warn(`${CLI}: ${warning}`);
+    console.log(`${CLI}: OpenAI-compatible server at ${openai.host} · model ${openai.model}`);
   } else {
     const bin = values["claude-bin"] ?? "claude";
     const st = await exec(bin, ["auth", "status"]).catch(() => null);
@@ -369,7 +411,9 @@ async function cmdRun(argv: string[]): Promise<void> {
         ? { model: new AnthropicModel(new Anthropic({ maxRetries: 4 }), values.model ?? "claude-opus-5-5", values.effort as Effort) }
         : hosted
           ? { hosted }
-          : { claudeCode: { model: values.model, bin: values["claude-bin"] } }),
+          : openai
+            ? { openai }
+            : { claudeCode: { model: values.model, bin: values["claude-bin"] } }),
       effort: values.effort!,
       maxTurns,
       forkTimeoutMs,
@@ -582,10 +626,11 @@ async function cmdDoctor(argv: string[]): Promise<void> {
   const claudeIn = !!st && !/"loggedIn":\s*false/.test(st.stdout);
   const apiKey = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
   const hs = hostedSettings();
-  // Claude Code is the default engine, but not the only one: without it, a key for another engine will do.
-  if (claudeIn || (!apiKey && !hs.apiKey)) {
-    check(claudeIn, "Claude Code logged in (engine: claude-code, uses your Claude plan)", st ? "run: claude auth login" : "install Claude Code, or set up --engine api or hosted");
-  } else console.log("info  Claude Code isn't logged in. That's fine if you use --engine api or hosted");
+  const oa = await doctorOpenAI(openaiSettings(undefined, process.env, FROM_ENV_FILE), AbortSignal.timeout(8000), ENV_FILE);
+  // Claude Code is the default engine, but not the only one: without it, a key or a working server for another engine will do.
+  if (claudeIn || (!apiKey && !hs.apiKey && oa.level !== "ok")) {
+    check(claudeIn, "Claude Code logged in (engine: claude-code, uses your Claude plan)", st ? "run: claude auth login" : "install Claude Code, or set up --engine api, hosted or openai");
+  } else console.log("info  Claude Code isn't logged in. That's fine if you use --engine api, hosted or openai");
   if (apiKey) console.log("ok    Anthropic API key (engine: api)");
   else console.log(`info  No Anthropic API key. That's fine: it's only needed for --engine api (put ANTHROPIC_API_KEY=... in ${ENV_FILE})`);
   if (!hs.apiKey) console.log(`info  No hosted key (${HOSTED_KEY_ENV}). That's fine: it's only needed for --engine hosted`);
@@ -596,10 +641,12 @@ async function cmdDoctor(argv: string[]): Promise<void> {
       check(true, `hosted key (engine: hosted): credit $${me.credits.balanceUsd.toFixed(4)} (${me.workspace.label || me.workspace.id}) at ${client.label.replace(/^hosted /, "")}`);
     } catch (e) {
       // A key the gateway turns down is broken; a gateway that can't be reached right now is only worth a note.
-      if (e instanceof HostedError && e.kind === "auth") check(false, "hosted key (engine: hosted)", (e as Error).message);
+      if (e instanceof ChatError && e.kind === "auth") check(false, "hosted key (engine: hosted)", (e as Error).message);
       else console.log(`info  hosted key set, but the gateway check failed: ${(e as Error).message}`);
     }
   }
+  if (oa.level === "info") console.log(`info  ${oa.text}`);
+  else check(oa.level === "ok", oa.text, oa.hint);
   if (claudeIn) {
     const version = (await exec("claude", ["--version"])).stdout.trim();
     if (cachedCanaryPass(version)) console.log(`ok    Claude Code ${shortVersion(version)} isolation canary (passed earlier)`);

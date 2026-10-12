@@ -68,12 +68,17 @@ export const RUN_FLAGS: Flag[] = [
   {
     flag: "--engine NAME",
     def: "claude-code",
-    desc: "claude-code runs forks through Claude Code on your Claude plan. api calls the Anthropic API with a key. hosted uses Forkbomb's GPU model, paid with credit.",
+    desc: "claude-code runs forks through Claude Code on your Claude plan. api calls the Anthropic API with a key. hosted uses Forkbomb's GPU model, paid with credit. openai uses any OpenAI-compatible server you name.",
   },
   {
     flag: "--model ID",
     def: "engine default",
-    desc: "Model for the forks. api: claude-opus-5-5. claude-code: your Claude Code default (for example opus or sonnet). Ignored by hosted.",
+    desc: "Model for the forks. api: claude-opus-5-5. claude-code: your Claude Code default (for example opus or sonnet). openai: required, an id the server serves. Ignored by hosted.",
+  },
+  {
+    flag: "--base-url URL",
+    def: "OPENAI_BASE_URL",
+    desc: "The server for --engine openai, for example http://localhost:11434/v1. https, or plain http to localhost.",
   },
   {
     flag: "--effort LEVEL",
@@ -285,6 +290,12 @@ export const DOCTOR_CHECKS: {
     check: "Hosted key and credit",
     verifies: "Optional, only for --engine hosted. If FORKBOMB_API_KEY is set, asks the gateway for your balance.",
     fix: STATUS.appLive ? "Create a workspace at /app" : "Create a workspace at /app (opens at launch)",
+  },
+  {
+    check: "OpenAI-compatible server",
+    verifies:
+      "Optional, only for --engine openai. If OPENAI_BASE_URL is set, asks the server for its model list and says which key it sends. Only a rejected key fails; a URL the engine can't use is a note.",
+    fix: "Start the server, or fix OPENAI_BASE_URL or FORKBOMB_OPENAI_API_KEY",
   },
   {
     check: "Isolation canary",

@@ -26,7 +26,9 @@ This document describes the code as it is in 0.1.0. File paths are the source of
 | `src/agent.ts` | `api` engine tool loop on the Anthropic Messages API, and the fork system prompt |
 | `src/engines/claude-code.ts` | `claude-code` engine: headless Claude Code driver and its isolation settings |
 | `src/engines/canary.ts` | Isolation canary for the `claude-code` engine |
-| `src/engines/hosted.ts` | `hosted` engine: OpenAI-compatible client and tool loop |
+| `src/engines/chat.ts`, `src/engines/chat-stream.ts` | Chat Completions client, stream parser and tool loop, shared by `hosted` and `openai` |
+| `src/engines/hosted.ts` | `hosted` engine: the gateway's errors, billing, balance and cold-start notice |
+| `src/engines/openai.ts` | `openai` engine: any OpenAI-compatible server, its settings, preflight and doctor check |
 | `src/judge.ts` | Patch extraction, fresh-clone test run, test-output parsers, scoring |
 | `src/guard.ts` | The tamper guard: rules over the source a patch adds, and the node:test probe |
 | `src/strategies.ts` | The twelve fork strategies |
@@ -44,7 +46,7 @@ This document describes the code as it is in 0.1.0. File paths are the source of
 
 ## The run loop
 
-`runRace()` in `src/orchestrator.ts` owns a run from start to finish. `src/cli.ts` validates every flag first, before any network call, canary or run folder, then checks the engine: Claude Code must be installed and logged in (and pass the canary, see below), the `api` engine needs `ANTHROPIC_API_KEY` and checks it with one free `models.list` call (a 401 or 403 stops the run there), and the `hosted` engine calls `GET /api/v1/me` and refuses to start with an empty balance. The run folder is `<runs>/<id>`, where the id is the start time to the second; a second run in the same second gets `-2`, created with a non-recursive `mkdir` so two runs never share a folder.
+`runRace()` in `src/orchestrator.ts` owns a run from start to finish. `src/cli.ts` validates every flag first, before any network call, canary or run folder, then checks the engine: Claude Code must be installed and logged in (and pass the canary, see below), the `api` engine needs `ANTHROPIC_API_KEY` and checks it with one free `models.list` call (a 401 or 403 stops the run there), the `hosted` engine calls `GET /api/v1/me` and refuses to start with an empty balance, and the `openai` engine says which key it sends to which host, then asks its server for the model list (`GET /models`, no retries) and stops if the server can't be reached, rejects the key or doesn't list `--model`. The run folder is `<runs>/<id>`, where the id is the start time to the second; a second run in the same second gets `-2`, created with a non-recursive `mkdir` so two runs never share a folder.
 
 1. **pid 1.** The user's repo is forked into `<run>/body`. `initBase()` snapshots it as a commit every fork shares. A `.git` *file* (worktree or submodule) is removed first so nothing is written into another repo, and git runs with hooks, fsmonitor, GPG signing and system config turned off.
 2. **Baseline.** The test command runs once on pid 1, sandboxed. The pass/fail counts become the baseline total that later guards against deleted tests. If the suite already passes, the run ends there. If the command itself is broken (`brokenTestCommand()`: exit 126 or 127, an npm, pnpm or yarn script that doesn't exist, or a suite that printed its results and then never exited), no fork starts and the run says to check `--test`. A suite that timed out without printing results still races, with a warning, since the hang may be the bug.
@@ -55,7 +57,7 @@ This document describes the code as it is in 0.1.0. File paths are the source of
 7. **Grow.** If no fork passes, the round's best verified state (pid 1 plus its patch) becomes the parent of the next round, but only if it beat the parent's score. Rounds stop at `--rounds` (default 2), on a winner, when hosted credit runs out, or when the run is halted (below).
 8. **Finish.** The winning patch is written to `winner.patch`, or, when nothing passed, the best partial patch to `best.patch`, but only if it did better than the baseline: a fork that didn't improve on the unchanged repo isn't called "best". `--apply` runs `git apply` against your repo, prefixed with the repo's subdirectory when it sits inside a larger git tree. Losing clones and their states are deleted unless `--keep-forks`; per-fork temp dirs always are.
 
-**Halting.** Three things stop every fork at once, with a `kill` event for each one still running or judging: an interrupt (`RunOptions.signal`, which the CLI aborts on Ctrl-C, `SIGTERM` or `SIGHUP`), a fork whose engine reports a rejected key (`ForkResult.fatal`: a 401 or 403 from the Anthropic API or the hosted gateway), and free disk space falling below a floor (1 GiB, or half of what was free at the start if that is less), checked before each round and every 2 s during one. An interrupted run applies nothing, still cleans up per `--keep-forks`, and ends with `run_end.interrupted`. The CLI exits 128 + the signal number (130 for Ctrl-C); a second Ctrl-C, or 5 s without the run ending, kills every tracked process group outright. An `exit` handler in `src/cli.ts` kills every group in `src/procs.ts` however the CLI exits, so no fork, test run or Claude Code session outlives it.
+**Halting.** Three things stop every fork at once, with a `kill` event for each one still running or judging: an interrupt (`RunOptions.signal`, which the CLI aborts on Ctrl-C, `SIGTERM` or `SIGHUP`), a fork whose engine reports an error every fork would hit (`ForkResult.fatal`: a 401 or 403 from the Anthropic API or the hosted gateway; on `openai`, a rejected key, a missing model, a server or model without tool calling, or no Chat Completions API at the base URL), and free disk space falling below a floor (1 GiB, or half of what was free at the start if that is less), checked before each round and every 2 s during one. An interrupted run applies nothing, still cleans up per `--keep-forks`, and ends with `run_end.interrupted`. The CLI exits 128 + the signal number (130 for Ctrl-C); a second Ctrl-C, or 5 s without the run ending, kills every tracked process group outright. An `exit` handler in `src/cli.ts` kills every group in `src/procs.ts` however the CLI exits, so no fork, test run or Claude Code session outlives it.
 
 ```mermaid
 sequenceDiagram
@@ -136,6 +138,7 @@ The profile is generated per fork by `seatbeltProfile()`:
 | Writes | Denied everywhere except the fork's clone, its private temp dir, and `/dev/null`, `/dev/zero`, `/dev/dtracehelper`, `/dev/tty*`, `/dev/fd/*`. `<clone>/.git` is denied for forks; only the judge's own git calls may write it. |
 | Reads | File contents and extended attributes under the home folder and under the runs folder (`SandboxSpec.denyRead`) are denied, except the clone, the temp dir and common toolchain folders (`.nvm`, `.volta`, `.bun`, `.cargo`, `.rustup`, `.pyenv`, `.gradle`, `.m2`, `go`, `Library/Python` and others in `HOME_TOOLCHAINS`). So sibling forks, pid 1 and other runs stay unreadable even when `FORKBOMB_HOME` or `--runs-dir` puts runs outside the home folder. Metadata stays visible, and each parent folder of the clone is listable, so path lookups and `getcwd()` work. Other reads outside the home folder are allowed. |
 | Network | Without `--network`: `(deny network*)`, then binding and inbound connections allowed on local loopback addresses and outbound connections allowed only to loopback (`network-bind`/`network-inbound` and `network-outbound` as separate rules: one `network*` rule with a `local` filter would match every outbound socket). TCP and UDP to any other address fail with `EPERM`, by IP as well as by name, and the mDNSResponder and DNS-SD services are blocked, so names don't resolve. `forkbomb doctor` checks both halves. |
+| Model server | When a chat engine's server runs on this machine (`ChatClient.loopbackPort`: an `openai` base URL on localhost, say), the orchestrator passes its port as `SandboxSpec.denyPorts` to every fork, the baseline and the judge, and the profile ends with `(deny network-outbound (remote ip "*:<port>"))`, with or without `--network`. Such a server answers anyone on loopback (Ollama's `/api/pull` and `/api/delete` included). Under `(deny network*)`, a later port deny doesn't override an allow of `remote ip "localhost:*"` (on macOS 15 the connection goes through) but does override `remote tcp` and `remote udp`, so with a port to deny, loopback is allowed per protocol instead. Every other loopback port stays open. |
 | Limits | `ulimit -f` caps any one file at 1 GiB, and `ulimit -u` caps the user's process count at what it was plus 1,024 (macOS counts processes per user), so a runaway write or a fork bomb stops there. Claude Code sessions are started under the same limits. |
 | Environment | `cleanEnv()` keeps only `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL` and `SHELL`. It sets `TMPDIR` to the fork's temp dir, `CI=1`, `TERM=dumb`, no color, global and system git config off, no git prompts, and points npm, pip and XDG caches and config into the temp dir. A repo's `.npmrc` can't swap the shell npm runs scripts with. No API key or token reaches a fork. |
 | Processes | Each command is a detached process group, registered in `src/procs.ts`. On timeout or abort the whole group gets `SIGKILL`; when the shell exits, anything it left running in the group is killed too. Pipes get 1.5 s to drain, so a background process holding them open can't hang the fork. |
@@ -145,7 +148,7 @@ The profile is generated per fork by `seatbeltProfile()`:
 
 ## The tools
 
-The `api` and `hosted` engines give each fork exactly two tools, both backed by `Workspace` in `src/tools.ts`. The `api` engine uses Anthropic's schema-less `bash_20250124` and `text_editor_20250728` (`str_replace_based_edit_tool`); the `hosted` engine declares two function tools, `bash` and `edit`, with the same behavior.
+The `api`, `hosted` and `openai` engines give each fork exactly two tools, both backed by `Workspace` in `src/tools.ts`. The `api` engine uses Anthropic's schema-less `bash_20250124` and `text_editor_20250728` (`str_replace_based_edit_tool`); the `hosted` and `openai` engines declare two function tools, `bash` and `edit` (`CHAT_TOOLS` in `src/engines/chat.ts`), with the same behavior.
 
 - **bash.** Each call is a fresh sandboxed shell at the clone root (`cd` doesn't carry over), with `--bash-timeout` (default 120 s). The result ends in `[exit code N]`, `[timed out after Ns]` or `[aborted]`.
 - **Editor.** `view` (line numbers, line ranges, directory listings two levels deep that skip `.git`, `node_modules`, `dist`, `build`, `.next` and virtualenvs, capped at 24,000 characters), `create`, `str_replace` (exactly one match, replacement taken literally) and `insert`. Files over 2 MB are refused for viewing and editing.
@@ -189,16 +192,30 @@ claude -p --output-format stream-json --verbose --safe-mode --no-session-persist
 
 ### `hosted`
 
-`HostedClient` in `src/engines/hosted.ts` talks to an OpenAI-compatible Chat Completions endpoint, by default `https://forkbomb.fun/api/v1` (`FORKBOMB_HOSTED_URL` overrides it).
+`HostedClient` in `src/engines/hosted.ts` talks to an OpenAI-compatible Chat Completions endpoint, by default `https://forkbomb.fun/api/v1` (`FORKBOMB_HOSTED_URL` overrides it). It extends `ChatHttpClient` in `src/engines/chat.ts`, the request, retry and streaming code it shares with the `openai` engine, and adds the gateway's error messages, billing and balance.
 
 - **The key goes to one place.** `FORKBOMB_API_KEY` is sent only in the `Authorization` header to the configured gateway. The base URL must be https (plain http is accepted only for loopback) and may not carry credentials; redirects are refused. The key is redacted from every event, log line and error.
 - **The server picks the model.** Requests send `model: "hosted"` with the two tools and `tool_choice: "auto"`. Clients only ever see the model as `forkbomb-hosted`.
-- **Streaming, so a kill is cheap.** Requests stream (`stream: true` with `include_usage`), and `src/engines/hosted-stream.ts` assembles the events back into one completion. A killed fork hangs up mid-answer; the gateway sees the connection close, stops the GPU and bills only what was streamed.
+- **Streaming, so a kill is cheap.** Requests stream (`stream: true` with `include_usage`), and `src/engines/chat-stream.ts` assembles the events back into one completion. A killed fork hangs up mid-answer; the gateway sees the connection close, stops the GPU and bills only what was streamed.
 - **Retries.** 429, 500, 502, 504, a network error and a transient 503 (one marked `upstream_busy` or carrying `Retry-After`) are retried up to 4 times with jittered exponential backoff, honoring `Retry-After`. A 503 for an unprovisioned pool fails fast. A stream that fails partway is never sent again, with one exception: an error event that the gateway settled at zero before the model produced anything (a job still queued when the budget ran out, a pool busy or warming up) is retried like the HTTP 503 or 504 it stands for. The gateway sends its headers after a few seconds without output to hold the connection through a cold start, so those failures arrive in-stream. Any other error event mid-stream reads like the HTTP error it stands for. An answer counts as whole only once a choice carries a `finish_reason`; `[DONE]` alone is not enough, because the gateway ends every stream with one. Each request has a 10-minute ceiling.
 - **Cost.** Each turn's charge is read from the settlement comment the gateway sends before `[DONE]` (or the `x-request-cost-usd` header on a JSON answer). A turn that fails mid-stream is still billed for what it generated, and the client reads that settlement before giving up. A turn the client hangs up on (a killed or timed-out fork, a lost connection) is billed too, but settled after the client is gone, so `hungUpCostUsd()` works it out the way the gateway does: the usage chunk if it arrived, otherwise the gateway's input estimate over the request body plus the output that had streamed (bytes / 3, at least a token per delta), at the prices `/me` reported, rounded up to a micro-USD. That part is `fork_done.costEstimatedUsd`. The run reads the balance before the first round and, if anything was estimated, again once the gateway has settled (`chargedSince()`, polling for up to 6 s while hung-up turns still hold their reservations); a drop that fits becomes the exact `run_end.costUsd`, otherwise the estimate stands with `run_end.costApprox`.
 - **Shared credit gate.** The first fork to get a 402 records it on the run's `CreditGate`; no fork makes another call and no new round starts.
+- **Cold starts.** While the pool starts a GPU worker, the gateway holds each request with `: keep-alive` comments and no answer. `WarmUpNotice` watches every fork's requests for the run: once one has waited 20 s that way with no answer yet anywhere in the run, it logs that the pool is warming up, then the wait so far about every 60 s, and a last line when the first answer starts streaming. After that it says nothing more, since later waits are a busy pool rather than a cold one. The lines are `log` events, so the terminal and `--ui` both show them.
 
-`runHostedFork()` mirrors the `api` loop over Chat Completions: tool calls without an id get one, `content_filter` ends the fork as a refusal, and `length` is handled like `max_tokens`. The GPU pool is live; credit opens when $FORKBOMB launches. The first hosted race, on 2026-10-07 (run `20261007-015122`), ran 4 forks, passed 14/14 and was billed $0.09 of operator-granted test credit.
+`runChatFork()` in `src/engines/chat.ts` mirrors the `api` loop over Chat Completions, for `hosted` and `openai` alike: tool calls without an id get one, `content_filter` ends the fork as a refusal, and `length` is handled like `max_tokens`. The GPU pool is live; credit opens when $FORKBOMB launches. The first hosted race, on 2026-10-07 (run `20261007-015122`), ran 4 forks, passed 14/14 and was billed $0.09 of operator-granted test credit.
+
+### `openai`
+
+`OpenAIClient` in `src/engines/openai.ts` runs forks on any OpenAI-compatible Chat Completions server the user names: Ollama, LM Studio, vLLM, llama.cpp, OpenRouter. It is the same `ChatHttpClient` and `runChatFork()` loop as `hosted`.
+
+- **The user names the server and the model.** `--base-url`, else `OPENAI_BASE_URL`; `--model` is required and sent as is. The URL rules are the hosted engine's: https, or plain http only to loopback, no credentials in the URL, redirects refused, the key redacted from every event, log line and error, and never in a fork's environment.
+- **Which key, sent where.** `openaiSettings()` picks at most one key, sent only in the `Authorization` header to that base URL. `FORKBOMB_OPENAI_API_KEY` is the engine's own and goes to whichever server it names. Failing that, `OPENAI_API_KEY` goes only where an OpenAI SDK with the same settings would send it: to the server `OPENAI_BASE_URL` names when both come from the same place (the environment, or `~/.forkbomb/.env`, which the CLI's `.env` loader records), or to `api.openai.com`. An `OPENAI_API_KEY` exported for other tools therefore never goes to a `--base-url` server, and the run says so if one was set but withheld. Before the first request, the CLI prints the key's name, where it came from and the host it goes to, or that no key is sent. `forkbomb doctor` shows the same.
+- **Checked before forking.** The CLI calls `GET /models` once, without retries. An unreachable server, a rejected key (401, or any 403 there, since that request carries no input to object to), or a model the server doesn't list (allowing Ollama's implied `:latest` and variant suffixes like OpenRouter's `:nitro`) stops the run before the run folder exists. Any other error, or a server without a model list, gets a warning that the model wasn't checked, and the run goes on.
+- **Errors every fork would hit stop the run.** A rejected key (a 401, or a 403 whose message is about a key, token or authorization: OpenRouter also answers 403 for input its moderation flags, which fails only that fork), a missing model (a 404 about the model, or a 400 or 422 saying it doesn't exist), a server or model without tool calling and a 404 for the Chat Completions path itself are fatal, with what to change. Tool calling counts as missing only on the server's own words in a 400, 404 or 422 answer to the request (Ollama's "does not support tools", vLLM's "tool choice requires --enable-auto-tool-choice", llama.cpp's "tools param requires --jinja", OpenRouter's "No endpoints found that support tool use"), or on llama.cpp's 500 whose message starts with its `--jinja` line. An error that arrives mid-stream, or that quotes the model's output (Ollama's "error parsing tool call: raw='…'"), never counts as a missing model or missing tool calling, so it fails only that fork. A 429, 500, 502, 503 or 504 is retried with the same backoff as on `hosted`, except llama.cpp's `--jinja` 500.
+- **A model that never calls a tool.** A server that ignores `tools` answers in text, and each fork ends its turn having changed nothing. When every fork in a round ended that way without a single `tool` event, the run logs one warning that the model may not support tool calling, with what to check.
+- **The server's port is closed to forks.** When the base URL is on loopback, no fork, baseline or judge command can connect to its port (see the sandbox's Model server row).
+- **Usage, if the server reports it.** Requests ask for `stream_options.include_usage`. A server that rejects the option with a 400 naming it gets the turn again without it, and the client stops asking. A server that ignores it reports no tokens.
+- **Cost is unknown.** Nothing here sees what the server bills, so `fork_done.costUsd` and `run_end.costUsd` are null, as on `claude-code`. A 402 (a provider out of credit) still closes the run's `CreditGate`.
 
 ## The judge
 
@@ -228,7 +245,7 @@ Every state change in a run is a `RunEvent` (the union in `src/events.ts`), emit
 
 | `type` | When | Fields besides `type` and `t` |
 |---|---|---|
-| `run_start` | Before the baseline | `runId`, `task`, `testCmd`, `forks`, `rounds`, `model`, `engine` (`api`, `claude-code`, `hosted`), `effort`, `mode` (`race`, `best`), `repo`, `forker`, `sandbox`, `network` |
+| `run_start` | Before the baseline | `runId`, `task`, `testCmd`, `forks`, `rounds`, `model`, `engine` (`api`, `claude-code`, `hosted`, `openai`), `effort`, `mode` (`race`, `best`), `repo`, `forker`, `sandbox`, `network` |
 | `baseline` | After the suite runs on pid 1 | `passed`, `failed`, `exitCode`, `score`, `outputTail` |
 | `fork` | A round's clones exist | `round`, `parent`, `forks` (ids), `msEach`, `workspaceBytes`, `logicalBytes`, `physicalBytes`, `forker` |
 | `fork_start` | A fork gets its strategy | `fork`, `round`, `parent`, `strategy`, `brief` |
@@ -237,15 +254,15 @@ Every state change in a run is a `RunEvent` (the union in `src/events.ts`), emit
 | `fork_done` | The engine returns | `fork`, `reason`, `turns`, `inputTokens`, `outputTokens`, `costUsd`, `summary`, optional `costEstimatedUsd`, `error`, `fatal` |
 | `judging` | The judge starts on a fork | `fork` |
 | `judge` | The judge returns a verdict | `fork`, `passed`, `failed`, `exitCode`, `score`, `diffLines`, `filesChanged`, `tampered`, `outputTail`, optional `guard` (each tamper-guard hit as `file`, `line`, `why`) |
-| `kill` | A race winner, an interrupt, a rejected key or a nearly full disk aborts a fork | `fork`, `why` |
+| `kill` | A race winner, an interrupt, a fatal engine error (a rejected key, say) or a nearly full disk aborts a fork | `fork`, `why` |
 | `round_end` | Every fork in the round has settled | `round`, `best`, `bestScore` |
 | `winner` | A fork scored 1 | `fork`, `round`, `score`, `diffLines`, `filesChanged`, `patch`, `summary` |
 | `run_end` | Last event of the run | `ok`, `ms`, `costUsd`, `applied`, `patchPath`, `best`, `bestScore`, optional `costApprox`, `interrupted` |
-| `log` | Warnings and errors worth showing | `level` (`info`, `warn`, `error`), `msg` |
+| `log` | Notes, warnings and errors worth showing (a hosted cold start, for one) | `level` (`info`, `warn`, `error`), `msg` |
 
 `parseEventLog()` reads a log back for `replay` and `export`. It rejects the first line that isn't JSON, has an unknown `type`, or lacks a field the viewer needs, so a log the viewer can't play is refused instead of exported.
 
-pid 1 appears as `body` in `parent` fields. `costUsd` on `run_end` is null when any fork's cost is unknown, which is always the case on the `claude-code` engine. The `winner` event carries the full patch, so a recorded run replays without any other file.
+pid 1 appears as `body` in `parent` fields. `costUsd` on `run_end` is null when any fork's cost is unknown, which is always the case on the `claude-code` and `openai` engines. The `winner` event carries the full patch, so a recorded run replays without any other file.
 
 **Consumers.** `src/server.ts` serves `ui/` on `127.0.0.1` (port 4317, moving to the next free port if it is taken). In live mode `/events` streams the bus over server-sent events, history first, with a ping every 15 s. In replay mode the page fetches the recorded events from `/events.json` and plays them back, with a REPLAY badge where a live run shows LIVE. Neither is readable from another site: the server answers only requests whose `Host` is `127.0.0.1:<port>` or `localhost:<port>` (which stops DNS rebinding), refuses data requests a browser marks `Sec-Fetch-Site: cross-site`, and never serves events as a script that sets a global (which any page could include with a `<script>` tag). `ui/app.js` is one code path for all of it. `forkbomb export` writes a static, self-contained replay (`index.html`, `app.js`, `style.css`, `data.js`, `events.jsonl`) you can host anywhere, with this machine's paths replaced first (`scrubPaths()`: the run folder becomes `<run>`, the repo `./<name>`, the home folder and any `/Users/<name>` `~`); forkbomb.fun/replay is one.
 
@@ -266,7 +283,8 @@ flowchart TB
     end
     anthropic["Anthropic"]
     gateway["forkbomb.fun/api/v1"]
-    cli -->|"bash tool calls, api and hosted engines"| sh
+    oaserver["OpenAI-compatible server<br/>local or remote"]
+    cli -->|"bash tool calls, api, hosted and openai engines"| sh
     cli -->|"judge: git calls and test runs"| sh
     cli -->|"claude-code engine"| cc
     sh --> disk
@@ -274,10 +292,11 @@ flowchart TB
     cc -->|"Claude Code login"| anthropic
     cli -->|"ANTHROPIC_API_KEY, api engine"| anthropic
     cli -->|"FORKBOMB_API_KEY, hosted engine"| gateway
+    cli -->|"FORKBOMB_OPENAI_API_KEY or paired OPENAI_API_KEY, openai engine"| oaserver
     cli -->|"events over SSE"| ui
 ```
 
-Keys live in the CLI process only. The Anthropic key goes only to Anthropic, the hosted key only to the hosted gateway, and neither is in the environment of a fork's shell, a test run or a Claude Code session.
+Keys live in the CLI process only. The Anthropic key goes only to Anthropic, the hosted key only to the hosted gateway, the `openai` engine's key only to its server, and none of them is in the environment of a fork's shell, a test run or a Claude Code session.
 
 ## The web side
 

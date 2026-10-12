@@ -5,19 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { systemPrompt } from "../src/agent.js";
 import { DEFAULT_HOSTED_URL, HOME_ENV, HOSTED_KEY_ENV, HOSTED_URL_ENV } from "../src/brand.js";
-import {
-  type ChatCompletion,
-  type ChatRequest,
-  type CreditGate,
-  HOSTED_TOOLS,
-  HostedClient,
-  HostedError,
-  chargedSince,
-  checkBaseUrl,
-  formatCredits,
-  hostedSettings,
-  runHostedFork,
-} from "../src/engines/hosted.js";
+import { CHAT_TOOLS, type ChatCompletion, ChatError, type ChatRequest, type CreditGate, checkBaseUrl, runChatFork } from "../src/engines/chat.js";
+import { HostedClient, WarmUpNotice, chargedSince, formatCredits, hostedSettings } from "../src/engines/hosted.js";
 import { EventBus } from "../src/events.js";
 import { DEFAULT_PROTECT } from "../src/judge.js";
 import { type RunOptions, runRace } from "../src/orchestrator.js";
@@ -59,8 +48,8 @@ interface Reply {
   body: unknown;
   headers?: Record<string, string>;
   delayMs?: number;
-  /** Raw server-sent events, written one piece at a time, in place of `body`. */
-  sse?: string[];
+  /** Raw server-sent events, written one piece at a time, in place of `body`. A number is a pause, in ms. */
+  sse?: Array<string | number>;
   /** Leave the stream open after the last piece, like a model still generating. */
   hang?: boolean;
 }
@@ -97,6 +86,10 @@ async function gateway(handler: (call: Call) => Reply | Promise<Reply>) {
         res.writeHead(r.status ?? 200, { "content-type": "text/event-stream; charset=utf-8", "x-credits-remaining-usd": "4.200000", ...headers });
         for (const [i, piece] of sse.entries()) {
           if (res.destroyed) return;
+          if (typeof piece === "number") {
+            await new Promise((d) => setTimeout(d, piece));
+            continue;
+          }
           // Like the gateway, the last piece and the end of the body go out together.
           if (i === sse.length - 1 && !r.hang) return void res.end(piece);
           res.write(piece);
@@ -263,7 +256,7 @@ describe("hosted engine: one fork", () => {
     ];
     const gw = await gateway((c) => script[turnOf(c).turn]!());
     const { root, bus, cfg } = fork(gw.url);
-    const res = await runHostedFork(cfg);
+    const res = await runChatFork(cfg);
 
     expect(res).toMatchObject({ reason: "end_turn", turns: 5, inputTokens: 500, outputTokens: 100, summary: "Fixed sum and mul." });
     expect(res.costUsd).toBeCloseTo(0.0075, 10);
@@ -327,7 +320,7 @@ describe("hosted engine: one fork", () => {
     ];
     const gw = await gateway((c) => script[turnOf(c).turn]!());
     const { bus, cfg } = fork(gw.url);
-    const res = await runHostedFork(cfg);
+    const res = await runChatFork(cfg);
     expect(res.reason).toBe("end_turn");
     expect(res.summary).toBe("Recovered.");
 
@@ -354,7 +347,7 @@ describe("hosted engine: one fork", () => {
   it("backs off and retries on 429, then carries on", async () => {
     let n = 0;
     const gw = await gateway(() => (++n <= 2 ? { ...apiError(429, "rate_limited", "slow down"), headers: { "retry-after": "0" } } : reply({ content: "ok" })));
-    const res = await runHostedFork(fork(gw.url).cfg);
+    const res = await runChatFork(fork(gw.url).cfg);
     expect(res.reason).toBe("end_turn");
     expect(gw.chats()).toHaveLength(3);
     expect(res.turns).toBe(1);
@@ -362,7 +355,7 @@ describe("hosted engine: one fork", () => {
 
   it("gives up on 429 after the retry budget", async () => {
     const gw = await gateway(() => apiError(429, "rate_limited", "slow down"));
-    const res = await runHostedFork(fork(gw.url, { retries: 2 }).cfg);
+    const res = await runChatFork(fork(gw.url, { retries: 2 }).cfg);
     expect(res.reason).toBe("error");
     expect(res.error).toMatch(/rate limited by the hosted gateway after 2 retries/);
     expect(gw.chats()).toHaveLength(3);
@@ -380,7 +373,7 @@ describe("hosted engine: one fork", () => {
     for (const [r, want] of cases) {
       const gw = await gateway(() => r);
       const { cfg, credit } = fork(gw.url);
-      const res = await runHostedFork(cfg);
+      const res = await runChatFork(cfg);
       expect(res.reason).toBe("error");
       expect(res.error).toMatch(want);
       expect(res.error).not.toContain(KEY);
@@ -395,14 +388,14 @@ describe("hosted engine: one fork", () => {
     const busyNoHeader = apiError(503, "upstream_busy", "The hosted GPU pool is at capacity. Retry shortly.");
     let n = 0;
     const gw = await gateway(() => [busy, warming, busyNoHeader][n++] ?? reply({ content: "ok" }));
-    const res = await runHostedFork(fork(gw.url).cfg);
+    const res = await runChatFork(fork(gw.url).cfg);
     expect(res.reason).toBe("end_turn");
     expect(gw.chats()).toHaveLength(4);
   });
 
   it("gives up on a busy pool after the retry budget with advice that fits", async () => {
     const gw = await gateway(() => ({ ...apiError(503, "upstream_busy", "The hosted GPU pool is at capacity. Retry shortly."), headers: { "retry-after": "0" } }));
-    const res = await runHostedFork(fork(gw.url, { retries: 2 }).cfg);
+    const res = await runChatFork(fork(gw.url, { retries: 2 }).cfg);
     expect(res.reason).toBe("error");
     expect(res.error).toMatch(/hosted pool is at capacity after 2 retries \(upstream_busy: .*\)\. Try again shortly/);
     expect(res.error).not.toMatch(/not provisioned/);
@@ -412,7 +405,7 @@ describe("hosted engine: one fork", () => {
   it("reports an unreachable gateway after retrying", async () => {
     const gw = await gateway(() => reply({ content: "never" }));
     for (const close of servers.splice(0)) close();
-    const res = await runHostedFork(fork(gw.url, { retries: 2 }).cfg);
+    const res = await runChatFork(fork(gw.url, { retries: 2 }).cfg);
     expect(res.reason).toBe("error");
     expect(res.error).toMatch(/can't reach the hosted gateway at 127\.0\.0\.1:\d+/);
   });
@@ -421,7 +414,7 @@ describe("hosted engine: one fork", () => {
     const gw = await gateway(() => reply({ content: "should not be called" }));
     const { cfg, credit } = fork(gw.url);
     credit.exhausted = "out of credit: burn $FORKBOMB to top up";
-    const res = await runHostedFork(cfg);
+    const res = await runChatFork(cfg);
     expect(res).toMatchObject({ reason: "error", turns: 0, error: "out of credit: burn $FORKBOMB to top up" });
     expect(gw.chats()).toHaveLength(0);
   });
@@ -431,7 +424,7 @@ describe("hosted engine: one fork", () => {
     const { cfg, ctl } = fork(gw.url);
     setTimeout(() => ctl.abort(), 200);
     const t0 = performance.now();
-    const res = await runHostedFork(cfg);
+    const res = await runChatFork(cfg);
     expect(res.reason).toBe("killed");
     expect(performance.now() - t0).toBeLessThan(3000);
   });
@@ -443,7 +436,7 @@ describe("hosted engine: one fork", () => {
       const { cfg, ctl } = fork(gw.url);
       cfg.client = new HostedClient({ baseUrl: gw.url, apiKey: KEY, retryBaseMs: 1, ...(pricing ? { pricing } : {}) });
       setTimeout(() => ctl.abort(), 300);
-      const res = await runHostedFork(cfg);
+      const res = await runChatFork(cfg);
       expect(res.reason).toBe("killed");
       if (pricing) {
         // "Let me look ✓" is 15 bytes (✓ takes 3), "bash" + '{"comm' 10 more: 25 bytes over two deltas.
@@ -464,7 +457,7 @@ describe("hosted engine: one fork", () => {
       killedAt = performance.now();
       ctl.abort();
     }, 200);
-    const res = await runHostedFork(cfg);
+    const res = await runChatFork(cfg);
     expect(res.reason).toBe("killed");
     expect(performance.now() - killedAt).toBeLessThan(500);
     const closedAt = await gw.chats()[0]!.closed;
@@ -477,7 +470,7 @@ describe("hosted engine: one fork", () => {
     let turns = 0;
     const gw = await gateway(() => (++turns === 1 ? coldStart : reply({ content: "Nothing left to fix." }, "stop", "0.000100")));
     const { cfg } = fork(gw.url);
-    const res = await runHostedFork(cfg);
+    const res = await runChatFork(cfg);
     expect(res).toMatchObject({ reason: "end_turn", turns: 1, summary: "Nothing left to fix." });
     expect(res.costUsd).toBeCloseTo(0.0001, 10);
     expect(gw.chats()).toHaveLength(2);
@@ -492,7 +485,7 @@ describe("hosted engine: one fork", () => {
     for (const [event, want, outOfCredit] of cases) {
       const gw = await gateway(() => ({ body: null, sse: [chunk({ role: "assistant", content: "" }), chunk({ content: "partial" }), event, settled("0.000010")], hang: true }));
       const { cfg, credit, bus } = fork(gw.url);
-      const res = await runHostedFork(cfg);
+      const res = await runChatFork(cfg);
       expect(res).toMatchObject({ reason: "error", turns: 1 });
       expect(res.error).toMatch(want);
       expect(JSON.stringify(bus.history)).not.toContain(KEY);
@@ -508,14 +501,14 @@ describe("hosted engine: one fork", () => {
   it("sums usage and reports cost as unknown when the gateway doesn't price a call", async () => {
     const script = [() => reply({ tool_calls: [call("bash", { command: "true" })] }), () => reply({ content: "done" }, "stop", null)];
     const gw = await gateway((c) => script[turnOf(c).turn]!());
-    const res = await runHostedFork(fork(gw.url).cfg);
+    const res = await runChatFork(fork(gw.url).cfg);
     expect(res).toMatchObject({ reason: "end_turn", inputTokens: 200, outputTokens: 40, costUsd: null });
   });
 
   it("redacts the key if a server ever echoes it back", async () => {
     const gw = await gateway(() => apiError(400, "bad_request", `bad header: Bearer ${KEY}`));
     const { cfg, bus } = fork(gw.url);
-    const res = await runHostedFork(cfg);
+    const res = await runChatFork(cfg);
     expect(res.error).toContain("[redacted]");
     expect(res.error).not.toContain(KEY);
     expect(JSON.stringify(bus.history)).not.toContain(KEY);
@@ -618,6 +611,89 @@ describe("hosted engine: whole runs", () => {
   });
 });
 
+describe("hosted cold start", () => {
+  /** A reply held in the GPU queue for `ms` first: the gateway's headers, then only keep-alives, then the answer. */
+  const queued = (ms: number, r: Reply): Reply => {
+    const wait: Array<string | number> = [];
+    for (let left = ms; left > 0; left -= 50) wait.push(": keep-alive\n\n", Math.min(50, left));
+    return { ...r, sse: [...wait, ...toSse(r.body as ChatCompletion, r.headers?.["x-request-cost-usd"])] };
+  };
+  const notices = (bus: EventBus) =>
+    bus.history.flatMap((e) => (e.type === "log" && /hosted pool|hosted GPU worker/i.test(e.msg) ? [{ msg: e.msg, t: e.t }] : []));
+
+  it("says once per run, not per fork, that forks wait on a GPU worker, how long so far, and when it is up (#7)", async () => {
+    // Both forks' first requests sit in the queue until a worker is up: 1.01's for 700 ms, 1.02's for 1.5 s.
+    const gw = await gateway((c) => {
+      if (c.path.endsWith("/me")) return meReply(5_000_000);
+      const { turn, strategy } = turnOf(c);
+      if (strategy !== "surgeon") return queued(1500, reply({ content: "Still reading." }));
+      const script = [() => reply({ tool_calls: [fixSum(), fixMul()] }), () => reply({ content: "Fixed both." })];
+      return turn === 0 ? queued(700, script[0]!()) : script[turn]!();
+    });
+    const repo = tempDir("hosted-repo");
+    writeTree(repo, REPO);
+    const client = new HostedClient({ baseUrl: gw.url, apiKey: KEY, retryBaseMs: 1 });
+    const bus = new EventBus();
+    const res = await runRace(options(repo, client, { queueNotice: { afterMs: 250, everyMs: 150, tickMs: 10 } }), bus);
+
+    expect(res.ok).toBe(true);
+    const said = notices(bus).map((n) => n.msg);
+    expect(said[0]).toBe("Hosted pool warming up (a GPU worker is starting; usually 3-4 min)…");
+    expect(said.filter((m) => m.startsWith("Hosted pool warming up"))).toHaveLength(1);
+    const progress = said.filter((m) => m.startsWith("Still waiting"));
+    expect(progress.length).toBeGreaterThanOrEqual(1);
+    for (const m of progress) expect(m).toMatch(/^Still waiting for a hosted GPU worker: \d+s so far\.$/);
+    // The first answer ends it, though 1.02 is still queued: nothing more after "up".
+    expect(said.at(-1)).toMatch(/^Hosted pool is up after \d+s\.$/);
+    expect(said.filter((m) => m.startsWith("Hosted pool is up"))).toHaveLength(1);
+    const up = notices(bus).at(-1)!.t;
+    const firstTool = bus.history.find((e) => e.type === "tool")!.t;
+    expect(up).toBeLessThanOrEqual(firstTool);
+    expect(bus.history.filter((e) => e.type === "log" && e.level !== "info")).toEqual([]);
+  });
+
+  it("stays quiet for a short wait, a wait without keep-alives, and any wait once a worker has answered", async () => {
+    const said: string[] = [];
+    const notice = new WarmUpNotice((m) => said.push(m), { afterMs: 60, everyMs: 60, tickMs: 5 });
+    const sleep = (ms: number) => new Promise((d) => setTimeout(d, ms));
+    // Queued, but answered before afterMs.
+    const quick = notice.begin();
+    quick.waiting();
+    await sleep(20);
+    quick.started();
+    quick.end();
+    // Long, but never held with keep-alives (a slow answer, not a queue).
+    const slow = notice.begin();
+    await sleep(100);
+    slow.end();
+    // Held well past afterMs, but a worker already answered in this run: a busy pool, not a cold one.
+    const busy = notice.begin();
+    busy.waiting();
+    await sleep(150);
+    busy.end();
+    notice.dispose();
+    expect(said).toEqual([]);
+  });
+
+  it("says nothing more once the run is over", async () => {
+    const said: string[] = [];
+    const notice = new WarmUpNotice((m) => said.push(m), { afterMs: 40, everyMs: 1000, tickMs: 5 });
+    const sleep = (ms: number) => new Promise((d) => setTimeout(d, ms));
+    const call = notice.begin();
+    call.waiting();
+    await sleep(80);
+    expect(said).toEqual(["Hosted pool warming up (a GPU worker is starting; usually 3-4 min)…"]);
+    // A killed run: the call ends without an answer, and the notice is disposed. Nothing more, ever.
+    call.end();
+    notice.dispose();
+    const late = notice.begin();
+    late.waiting();
+    await sleep(60);
+    late.started();
+    expect(said).toHaveLength(1);
+  });
+});
+
 // ---------- the streaming client against a mocked fetch: exact chunk boundaries, aborts and failures ----------
 
 /** A response body that hands out one piece per read. `then` decides what follows the last piece. */
@@ -658,7 +734,7 @@ function mockFetch(...answers: Array<() => Response>) {
   return sent;
 }
 
-const REQ: ChatRequest = { messages: [{ role: "user", content: "fix it" }], tools: HOSTED_TOOLS };
+const REQ: ChatRequest = { messages: [{ role: "user", content: "fix it" }], tools: CHAT_TOOLS };
 const client = (o: { requestTimeoutMs?: number; errorGraceMs?: number } = {}) =>
   new HostedClient({ baseUrl: "https://gateway.test/api/v1", apiKey: KEY, maxRetries: 2, retryBaseMs: 1, errorGraceMs: 50, ...o });
 
@@ -777,7 +853,7 @@ describe("hosted client: streaming", () => {
     for (const [pieces, costUsd] of endings) {
       const sent = mockFetch(() => sseResponse(body(pieces).stream));
       const err = await client().chat(REQ, new AbortController().signal).catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(HostedError);
+      expect(err).toBeInstanceOf(ChatError);
       expect(err).toMatchObject({ kind: "network", message: "the hosted gateway stream ended before the answer was complete", costUsd });
       expect(sent).toHaveLength(1);
     }
@@ -800,7 +876,7 @@ describe("hosted client: streaming", () => {
     // Refunded every time: once the retries run out, the error it stands for, at no cost.
     const sent = mockFetch(() => sseResponse(body([": keep-alive\n\n", timeout + settled("0.000000")]).stream));
     const err = await client().chat(REQ, new AbortController().signal).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(HostedError);
+    expect(err).toBeInstanceOf(ChatError);
     expect(err).toMatchObject({ kind: "http", status: 504, costUsd: 0, message: "hosted gateway error 504 upstream_timeout: The hosted model did not finish within 280s." });
     expect(sent).toHaveLength(3);
   });
@@ -817,7 +893,7 @@ describe("hosted client: streaming", () => {
     for (const [pieces, want] of cases) {
       const sent = mockFetch(() => sseResponse(body(pieces, "hang").stream));
       const err = await client().chat(REQ, new AbortController().signal).catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(HostedError);
+      expect(err).toBeInstanceOf(ChatError);
       expect(err).toMatchObject(want);
       expect(sent).toHaveLength(1);
     }
@@ -856,7 +932,7 @@ describe("hosted client: streaming", () => {
       const { stream, state } = body([chunk({ content: "partial" }), event], "hang");
       const sent = mockFetch(() => sseResponse(stream));
       const err = await client().chat(REQ, new AbortController().signal).catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(HostedError);
+      expect(err).toBeInstanceOf(ChatError);
       expect(err).toMatchObject(want);
       expect(sent).toHaveLength(1);
       expect(state.cancelled).toBe(true);
@@ -871,7 +947,7 @@ describe("hosted client: streaming", () => {
       mockFetch(() => sseResponse(stream));
       const t0 = performance.now();
       const err = await client({ errorGraceMs: 5000 }).chat(REQ, new AbortController().signal).catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(HostedError);
+      expect(err).toBeInstanceOf(ChatError);
       expect(err).toMatchObject({ kind: "http", status: 504, costUsd: 0.0141 });
       expect(performance.now() - t0).toBeLessThan(1000);
       expect(state.cancelled).toBe(true);
@@ -953,10 +1029,10 @@ describe("hosted settings and credits", () => {
   });
 
   it("only sends the key over https, or plain http to this machine", () => {
-    expect(() => checkBaseUrl("http://example.com/api/v1")).toThrow(/https/);
-    expect(() => checkBaseUrl("not a url")).toThrow(/valid URL/);
-    expect(() => checkBaseUrl("https://user:pw@example.com/api/v1")).toThrow(/credentials/);
-    expect(checkBaseUrl("http://127.0.0.1:9/api/v1").host).toBe("127.0.0.1:9");
+    expect(() => checkBaseUrl("http://example.com/api/v1", HOSTED_URL_ENV)).toThrow(/https/);
+    expect(() => checkBaseUrl("not a url", HOSTED_URL_ENV)).toThrow(/valid URL/);
+    expect(() => checkBaseUrl("https://user:pw@example.com/api/v1", HOSTED_URL_ENV)).toThrow(/credentials/);
+    expect(checkBaseUrl("http://127.0.0.1:9/api/v1", HOSTED_URL_ENV).host).toBe("127.0.0.1:9");
     const c = new HostedClient({ baseUrl: "https://forkbomb.fun/api/v1/", apiKey: KEY });
     expect(c.topUpUrl).toBe("https://forkbomb.fun/app");
     expect(c.label).toBe("hosted (forkbomb.fun)");
