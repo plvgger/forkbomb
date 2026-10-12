@@ -147,6 +147,24 @@ describe("cli", () => {
     }
   });
 
+  it("keeps the tamper guard on under --no-default-protect; only --no-tamper-guard turns it off", async () => {
+    const home = tempDir("brand-guard-home");
+    writeFileSync(join(home, "canary.json"), JSON.stringify({ ok: true, version: "9.9.9 (Claude Code)", checks: [] }));
+    const repo = tempDir("brand-repo");
+    writeTree(repo, CALC);
+    // The fork leaves the bug and switches assert.equal off from the module the test imports.
+    const cheat = `import assert from "node:assert/strict";\nassert.equal = () => {};\n${CALC["math.js"]}`;
+    const { bin } = fakeClaude({ "*": [{ write: { path: "math.js", content: cheat } }, { text: "All green." }] });
+    const run = (flag: string) => cli(["run", repo, "--task", "t", "--test", "node --test", "--forks", "1", "--rounds", "1", "--claude-bin", bin, flag], { [HOME_ENV]: home });
+
+    const guarded = await run("--no-default-protect");
+    expect(guarded.out).toContain("REJECTED by the tamper guard: math.js:2 replaces assert.equal from node:assert/strict");
+    expect(guarded.code, guarded.out).not.toBe(0);
+    const off = await run("--no-tamper-guard");
+    expect(off.out).not.toContain("tamper guard");
+    expect(off.code, off.out).toBe(0);
+  });
+
   it("Ctrl-C stops every fork and what it started, records the run as interrupted, cleans up and exits 130 (regression)", async () => {
     const home = tempDir("brand-sigint-home");
     // Claude Code sessions that hang in the middle of a tool call, each with a child process of its own.
