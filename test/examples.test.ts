@@ -8,6 +8,8 @@ import { tempDir } from "./helpers.js";
 
 const EXAMPLES = join(process.cwd(), "examples");
 const TEST_CMD = "node --test";
+// The files `node --test` runs when it's given none: Node 22's default patterns, without TypeScript.
+const NODE_TEST_FILE = /(^|\/)(test\/.+|[^/]*[._-]test|test-[^/]*|test)\.[cm]?js$/;
 
 interface Row {
   name: string;
@@ -25,6 +27,13 @@ function index(): Row[] {
     if (m) rows.push({ name: m[1]!, link: m[2]!, passed: Number(m[3]), total: Number(m[4]), command: m[5]! });
   }
   return rows;
+}
+
+/** Every file under `dir` as a path relative to it, skipping dot entries and node_modules. */
+function walk(dir: string, prefix = ""): string[] {
+  return readdirSync(join(dir, prefix), { withFileTypes: true })
+    .filter((e) => !e.name.startsWith(".") && e.name !== "node_modules")
+    .flatMap((e) => (e.isDirectory() ? walk(dir, `${prefix}${e.name}/`) : [`${prefix}${e.name}`]));
 }
 
 const rows = index();
@@ -47,19 +56,29 @@ describe("examples", () => {
     }
   });
 
-  it("let forks change the code but not the tests", async () => {
+  it("count as tests the files node --test runs", () => {
+    const runs = ["a.test.js", "a-test.mjs", "a_test.cjs", "test-a.js", "test.js", "test/a.js", "src/test/b/c.js", "src/a.test.js"];
+    const skips = ["a.js", "latest.js", "contest.js", "testing.js", "tests/a.js", "a.test.ts", "a.test.json", "test/a.json"];
+    for (const f of runs) expect(NODE_TEST_FILE.test(f), f).toBe(true);
+    for (const f of skips) expect(NODE_TEST_FILE.test(f), f).toBe(false);
+  });
+
+  it("let forks change the code and nothing the tests depend on", async () => {
     for (const name of dirs) {
       const dir = join(EXAMPLES, name);
-      // What the judge reverts: the default protect globs plus the files the test command runs.
+      // What the judge drops from a fork's patch: the default protect globs plus the files the test command runs.
       const protect = [...DEFAULT_PROTECT.map(globToRegExp), ...(await testInfraFiles(dir, TEST_CMD)).map(literalRegExp)];
-      const files = readdirSync(dir).filter((f) => !f.startsWith("."));
-      const tests = files.filter((f) => f.endsWith(".test.js"));
-      const code = files.filter((f) => f.endsWith(".js") && !tests.includes(f));
-      expect(files.sort(), name).toEqual([...code, ...tests, "package.json"].sort());
+      const files = walk(dir);
+      const tests = files.filter((f) => NODE_TEST_FILE.test(f));
+      const code = files.filter((f) => /\.[cm]?js$/.test(f) && !tests.includes(f));
+      expect(files, name).toContain("package.json");
       expect(tests.length, name).toBeGreaterThan(0);
       expect(code.length, name).toBeGreaterThan(0);
-      for (const f of [...tests, "package.json"]) expect(matchesAny(f, protect), `${name}/${f}`).toBe(true);
-      for (const f of code) expect(matchesAny(f, protect), `${name}/${f}`).toBe(false);
+      for (const f of [...tests, "package.json"]) expect(matchesAny(f, protect), `${name}/${f} is protected`).toBe(true);
+      for (const f of code) expect(matchesAny(f, protect), `${name}/${f} is open to forks`).toBe(false);
+      // Anything else a fork could edit, such as a fixture outside test/, could make the tests pass without fixing the code.
+      const open = files.filter((f) => !matchesAny(f, protect));
+      for (const f of open) expect(code.includes(f) || f.endsWith(".md"), `${name}/${f} is code or Markdown`).toBe(true);
     }
   });
 

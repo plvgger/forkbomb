@@ -12,3 +12,5 @@ Small repos with real bugs to race Forkbomb on. Each one is an ES module package
 Run the commands from the repo root, and add `--ui` to watch the process tree. Baseline is the tests passing out of the total before any fork starts, counted the way Forkbomb counts its baseline. [`test/examples.test.ts`](../test/examples.test.ts) runs every example's suite and fails when this table is out of date.
 
 No test waits on real time. The LRU cache takes a clock function and the rate limiter a clock object, and their tests drive fake ones, so a suite gives the same result on every judge run.
+
+To add an example, give it a folder and a row in the table. Name its tests `*.test.js` and put any fixture they read under `test/`. `test/examples.test.ts` also checks that the judge drops a fork's edits to the tests, `package.json` and every other file that isn't JavaScript code or Markdown.
