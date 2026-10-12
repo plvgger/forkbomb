@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { basename } from "node:path";
+import type { TamperHit } from "./guard.js";
 
 export type RunEvent =
   | {
@@ -58,6 +59,8 @@ export type RunEvent =
       diffLines: number;
       filesChanged: number;
       tampered: string[];
+      /** What the tamper guard found; present only when it rejected the fork (score 0). */
+      guard?: TamperHit[];
       outputTail: string;
     }
   | { type: "kill"; fork: string; why: string }

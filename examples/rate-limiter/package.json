@@ -1,0 +1,6 @@
+{
+  "name": "rate-limiter",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

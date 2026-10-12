@@ -17,6 +17,7 @@ import { shortVersion } from "./engines/claude-code.js";
 import { HostedClient, formatCredits, hostedSettings } from "./engines/hosted.js";
 import { OPENAI_ENGINE_KEY_ENV, OPENAI_KEY_ENV, OPENAI_URL_ENV, OpenAIClient, checkServer, doctorOpenAI, keyNotice, openaiSettings } from "./engines/openai.js";
 import { canClone } from "./fork/forker.js";
+import { guardSummary } from "./guard.js";
 import { DEFAULT_PROTECT } from "./judge.js";
 import { runRace } from "./orchestrator.js";
 import { killAll } from "./procs.js";
@@ -68,6 +69,8 @@ const RUN_OPTIONS = `run options
   --protect GLOB      extra read-only path for forks (repeatable)
   --no-default-protect  don't protect test files, test config, or the scripts
                       and setup files the test command runs
+  --no-tamper-guard   don't reject forks whose source code tampers with the
+                      test run (replaced assertions, exit 0 under the runner)
   --apply             apply the winning patch to the repo
   --keep-forks        keep killed forks' clones on disk
   --network           let forks reach the network (default: loopback only)
@@ -192,6 +195,10 @@ function narrate(e: Stamped, verbose: boolean): void {
       break;
     }
     case "judge": {
+      if (e.guard?.length) {
+        say(`  ${e.fork} REJECTED by the tamper guard: ${guardSummary(e.guard)}`);
+        break;
+      }
       const total = e.passed != null && e.failed != null ? e.passed + e.failed : null;
       const mark = e.score === 1 ? "PASS" : "fail";
       say(`  ${e.fork} ${mark} ${total != null ? `${e.passed}/${total}` : `${Math.round(e.score * 100)}%`} · ${e.diffLines} lines${e.tampered.length ? ` · reverted test edits: ${e.tampered.join(", ")}` : ""}`);
@@ -242,6 +249,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       concurrency: { type: "string", default: "8" },
       protect: { type: "string", multiple: true, default: [] },
       "no-default-protect": { type: "boolean", default: false },
+      "no-tamper-guard": { type: "boolean", default: false },
       apply: { type: "boolean", default: false },
       "keep-forks": { type: "boolean", default: false },
       network: { type: "boolean", default: false },
@@ -416,6 +424,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       sandbox: !values["no-sandbox"],
       protect: [...(values["no-default-protect"] ? [] : DEFAULT_PROTECT), ...(values.protect ?? [])],
       protectTestInfra: !values["no-default-protect"],
+      tamperGuard: !values["no-tamper-guard"],
       apply: values.apply!,
       keepForks: values["keep-forks"]!,
       runsDir,

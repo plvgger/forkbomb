@@ -1,7 +1,9 @@
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Forker } from "./fork/forker.js";
+import { GUARDED_SOURCES, type TamperHit, guardSummary, isGuarded, probeScript, readProbe, scanPatch } from "./guard.js";
 import { type RunOutcome, type SandboxSpec, runSandboxed } from "./sandbox.js";
 import { matchesAny, q } from "./util.js";
 
@@ -16,6 +18,8 @@ export const DEFAULT_PROTECT = [
   "**/test/**",
   "**/tests/**",
   "**/__tests__/**",
+  // jest and vitest load a __mocks__ file in place of the module it names, an assertion library included.
+  "**/__mocks__/**",
   "**/test_*.py",
   "**/*_test.py",
   "**/*_test.go",
@@ -304,6 +308,8 @@ export interface JudgeConfig {
   sandbox: boolean;
   /** Folders the apply step and the test run may not read (the runs folder), as in SandboxSpec.denyRead. */
   denyRead?: string[];
+  /** Reject patches whose source code tampers with the test run (see guard.ts). Default on. */
+  tamperGuard?: boolean;
 }
 
 export interface Verdict extends Counts {
@@ -312,10 +318,45 @@ export interface Verdict extends Counts {
   diffLines: number;
   filesChanged: number;
   tampered: string[];
+  /** What the tamper guard found. Any hit scores 0 and leaves no state. */
+  guard: TamperHit[];
   output: string;
   patch: string;
-  /** body + patch, or null if the patch wouldn't apply. */
+  /** body + patch, or null if the patch wouldn't apply or the guard rejected it. */
   stateDir: string | null;
+}
+
+/** A node:test summary line, so the run-time probe only runs where it means something. */
+const NODE_TEST_SUMMARY = /^[#ℹ]\s*(?:pass|fail) \d+/m;
+
+/** Probe runs per fork: the first, and one more each time a module kills the probe while it loads. */
+const PROBE_RUNS = 4;
+
+/**
+ * Run probeScript() in the judge's throwaway clone: load the patched modules the way a node:test file would,
+ * then check that assertions which must fail still do. Hits only on positive evidence; a probe that can't run,
+ * or whose cases never report, finds nothing. When a module kills the probe while loading (process.kill,
+ * a crash, a loop that never ends), the probe runs again without it, so it can't hide the modules after it.
+ */
+async function probe(testDir: string, files: string[], cfg: JudgeConfig, signal?: AbortSignal): Promise<TamperHit[]> {
+  const file = join(cfg.tmpDir, "probe.mjs");
+  const timeoutMs = Math.min(cfg.testTimeoutMs, 30_000);
+  let left = files;
+  for (let run = 0; run < PROBE_RUNS && left.length && !signal?.aborted; run++) {
+    await writeFile(file, probeScript(left.map((f) => pathToFileURL(join(testDir, f)).href), Math.min(5_000, Math.floor(timeoutMs / 4))));
+    const r = await runSandboxed(
+      `node --test --test-reporter=tap --test-force-exit ${q(file)}`,
+      { root: testDir, tmp: cfg.tmpDir, network: false, gitWrite: false, disabled: !cfg.sandbox, denyRead: cfg.denyRead, denyPorts: cfg.denyPorts },
+      { timeoutMs, maxOutput: 100_000, signal },
+    );
+    const seen = readProbe(r.output);
+    if (seen.passed.length) {
+      return [{ file: left.join(", "), line: null, why: `with the patched modules loaded, node:test passes assertions that must fail: ${seen.passed.join(", ")}` }];
+    }
+    if (seen.complete || seen.stuck === null) return [];
+    left = left.filter((_, i) => i !== seen.stuck);
+  }
+  return [];
 }
 
 async function git(spec: SandboxSpec, args: string, signal?: AbortSignal, maxOutput = 200_000) {
@@ -326,13 +367,70 @@ function splitZ(s: string): string[] {
   return s.split("\0").filter(Boolean);
 }
 
+/** The most the tamper guard reads of one diff. A source whose own diff is larger is rejected unread. */
+const GUARD_DIFF_CAP = 20_000_000;
+/** git diffs the guard may run to read the sources of one patch, splitting the list each time it is too large. */
+const GUARD_DIFF_CALLS = 40;
+/**
+ * A full-context diff that shows every changed line as text: `--text`, so a NUL byte or a `binary` attribute
+ * can't make a source a binary hunk, with the prefixes, colors and renames the parser expects whatever the
+ * repo's config says.
+ */
+const GUARD_DIFF =
+  "-c diff.noprefix=false -c diff.mnemonicPrefix=false -c diff.suppressBlankEmpty=false diff --cached --no-ext-diff --no-textconv --no-color --no-renames --text --unified=1000000000 --src-prefix=a/ --dst-prefix=b/";
+
+/**
+ * The sources the tamper guard reads (isGuarded: JavaScript and TypeScript the patch still has, not protected,
+ * not test code), by name, and their diffs. One diff covers them all unless it is over the cap; then the list
+ * is halved until each part fits, and a source whose own diff doesn't fit, or can't be diffed, is a hit.
+ */
+async function guardedSources(spec: SandboxSpec, cfg: JudgeConfig, base: string, signal?: AbortSignal): Promise<{ files: string[]; diff: string; unread: TamperHit[] }> {
+  const globs = GUARDED_SOURCES.map(q).join(" ");
+  const listed = await git(spec, `diff --cached --no-ext-diff --no-renames --name-only -z --diff-filter=d ${base} -- ${globs}`, signal, 5_000_000);
+  if (listed.code !== 0 || listed.output.length > 5_000_000) {
+    return { files: [], diff: "", unread: [{ file: "the patch", line: null, why: "couldn't be listed for the tamper guard" }] };
+  }
+  const files = splitZ(listed.output).filter((f) => isGuarded(f, cfg.protect));
+  const diffs: string[] = [];
+  const unread: TamperHit[] = [];
+  let calls = 0;
+  const read = async (group: string[], all: boolean): Promise<void> => {
+    if (signal?.aborted) return;
+    if (++calls > GUARD_DIFF_CALLS) {
+      for (const f of group) unread.push({ file: f, line: null, why: "wasn't read: the tamper guard stopped after too many oversized diffs" });
+      return;
+    }
+    const paths = all ? globs : group.map((f) => q(`:(literal)${f}`)).join(" ");
+    const r = await git(spec, `${GUARD_DIFF} ${base} -- ${paths}`, signal, GUARD_DIFF_CAP);
+    // clip() marks what it drops, so a clipped diff is longer than the cap.
+    if (r.code === 0 && r.output.length <= GUARD_DIFF_CAP) {
+      diffs.push(r.output);
+      return;
+    }
+    if (group.length === 1) {
+      const why = r.code === 0 ? `is too large for the tamper guard to read (its diff is over ${GUARD_DIFF_CAP / 1_000_000} MB)` : "couldn't be diffed for the tamper guard";
+      unread.push({ file: group[0]!, line: null, why });
+      return;
+    }
+    const half = Math.ceil(group.length / 2);
+    await read(group.slice(0, half), false);
+    await read(group.slice(half), false);
+  };
+  if (files.length) await read(files, true);
+  return { files, diff: diffs.join("\n"), unread };
+}
+
 /**
  * Judge one fork by what it would ship, not by what its workspace looks like.
  *
  * 1. Diff the fork's clone against the shared base commit, leaving out any
  *    protected file (tests, test config) it touched.
- * 2. Fork a fresh copy of the body and apply that patch to it.
- * 3. Run the suite on a throwaway clone of that state.
+ * 2. Scan the source code the patch adds for tampering with the test run
+ *    (guard.ts). A hit, or a source the guard can't read in full, scores 0
+ *    and the suite never runs.
+ * 3. Fork a fresh copy of the body and apply that patch to it.
+ * 4. Run the suite on a throwaway clone of that state, and on a node:test
+ *    suite, probe that the patched modules leave assertions failing.
  *
  * Edits to ignored files (node_modules, build output), planted test files and
  * anything else outside the patch never reach the run that decides the score.
@@ -358,7 +456,18 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
   }
   const patch = (await git(spec, `diff --cached --no-ext-diff --no-textconv --binary ${base}${pathspec}`, signal, 20_000_000)).output;
 
-  const empty = { passed: null, failed: null, exitCode: null, score: 0, diffLines, filesChanged, tampered, patch };
+  const empty = { passed: null, failed: null, exitCode: null, score: 0, diffLines, filesChanged, tampered, guard: [] as TamperHit[], patch };
+  const rejected = (hits: TamperHit[]) => `Rejected by the tamper guard.\n${hits.map((h) => guardSummary([h])).join("\n")}`;
+  // The guard reads each changed source whole, so it sees the imports an added line uses. The probe loads the
+  // same list of sources, taken from git rather than from what the parser read.
+  let sources: string[] = [];
+  if (cfg.tamperGuard !== false && patch.trim()) {
+    const read = await guardedSources(spec, cfg, base, signal);
+    const hits = [...read.unread, ...scanPatch(read.diff, cfg.protect).hits];
+    if (hits.length) return { ...empty, guard: hits, output: `${rejected(hits)}\nThe suite wasn't run.`, stateDir: null };
+    sources = read.files.filter((f) => !/x$/.test(f));
+  }
+
   await mkdir(cfg.tmpDir, { recursive: true });
   await cfg.forker.fork(cfg.bodyDir, [cfg.stateDir]);
   if (patch.trim()) {
@@ -382,15 +491,22 @@ export async function judge(spec: SandboxSpec, cfg: JudgeConfig, signal?: AbortS
     { root: testDir, tmp: cfg.tmpDir, network: cfg.network, gitWrite: false, disabled: !cfg.sandbox, denyRead: cfg.denyRead, denyPorts: cfg.denyPorts },
     { timeoutMs: cfg.testTimeoutMs, maxOutput: cfg.maxOutput, signal },
   );
-  await rm(testDir, { recursive: true, force: true });
-
   const counts = parseCounts(run.output);
   const exitCode = run.timedOut ? null : run.code;
+  const scored = run.timedOut || run.aborted ? 0 : score(exitCode, counts, cfg.baselineTotal);
+  // A score worth having from a node:test suite: check that the patched modules leave assertions working.
+  const caught = scored > 0 && sources.length && NODE_TEST_SUMMARY.test(run.output) && !signal?.aborted ? await probe(testDir, sources, cfg, signal) : [];
+  await rm(testDir, { recursive: true, force: true });
+  if (caught.length) {
+    await rm(cfg.stateDir, { recursive: true, force: true });
+    return { ...empty, ...counts, exitCode, guard: caught, output: `${run.output}\n${rejected(caught)}`, stateDir: null };
+  }
+
   return {
     ...empty,
     ...counts,
     exitCode,
-    score: run.timedOut || run.aborted ? 0 : score(exitCode, counts, cfg.baselineTotal),
+    score: scored,
     output: run.output,
     stateDir: cfg.stateDir,
   };

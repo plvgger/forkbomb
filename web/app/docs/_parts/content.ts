@@ -109,6 +109,11 @@ export const RUN_FLAGS: Flag[] = [
     desc: "Don't protect test files and test config by default.",
   },
   {
+    flag: "--no-tamper-guard",
+    def: "off",
+    desc: "Don't reject forks whose source code switches the tests off (replaced assertions, exit 0 under the test runner).",
+  },
+  {
     flag: "--apply",
     def: "off",
     desc: "Apply the winning patch to your repo.",
@@ -370,6 +375,7 @@ export const DEFAULT_PROTECT = [
   "**/test/**",
   "**/tests/**",
   "**/__tests__/**",
+  "**/__mocks__/**",
   "**/test_*.py",
   "**/*_test.py",
   "**/*_test.go",

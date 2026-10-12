@@ -20,7 +20,8 @@
   <a href="https://forkbomb.fun/security">Security</a>
 </p>
 
-<a href="https://forkbomb.fun/replay"><img src="docs/assets/replay.png" alt="Forkbomb replay: pid 1 forks into four agents, fork 1.04 passes 14 of 14 tests and the other three are killed" width="880"></a>
+<a href="https://forkbomb.fun/replay"><img src="docs/assets/demo.gif" alt="Animated replay of a recorded Forkbomb run: pid 1 forks into four agents that race on the same task, fork 1.04 passes 14 of 14 tests and exits 0, and the other three are killed" width="880"></a>
+<p><sub>A recorded run, sped up. The clock shows the recorded times.</sub></p>
 
 </div>
 
@@ -47,7 +48,7 @@ npm install && npm run build && npm link
 forkbomb doctor
 ```
 
-Race the bundled demo. `examples/calc` is the repo from the [recorded race](#a-recorded-race): 14 tests, 10 failing.
+Race the bundled demo. `examples/calc` is the repo from the [recorded race](#a-recorded-race): 14 tests, 10 failing. Three more broken repos, each with its baseline and run command, are listed in [`examples/`](examples/README.md).
 
 ```sh
 forkbomb run ./examples/calc \
@@ -200,15 +201,15 @@ Every fork is treated as hostile. A fork is a model running tools on your machin
 |---|---|
 | Writes | Only the fork's clone and its private temp dir. |
 | `.git` | Read-only for forks. Only the judge writes it. |
-| Reads | `api` and `hosted`: nothing under `~` or the runs folder except the clone, its temp dir and toolchain folders (`.nvm`, `.cargo`, `.pyenv`, …), so other forks and other runs stay private wherever `FORKBOMB_HOME` or `--runs-dir` puts them. `claude-code`: a deny list covering SSH, cloud and CLI credentials, every `.env` key file in `~` and its dot-folders, Keychains, shell history, app data, Desktop, Documents and Downloads. |
-| Network | Loopback only: connections to any other address are refused, by IP as well as by name, and the system DNS resolver is blocked. `--network` opts in on `api` and `hosted`. `claude-code`: no outbound network, WebFetch and WebSearch denied. `forkbomb doctor` checks it. |
+| Reads | `api`, `hosted` and `openai`: nothing under `~` or the runs folder except the clone, its temp dir and toolchain folders (`.nvm`, `.cargo`, `.pyenv`, …), so other forks and other runs stay private wherever `FORKBOMB_HOME` or `--runs-dir` puts them. `claude-code`: a deny list covering SSH, cloud and CLI credentials, every `.env` key file in `~` and its dot-folders, Keychains, shell history, app data, Desktop, Documents and Downloads. |
+| Network | Loopback only: connections to any other address are refused, by IP as well as by name, and the system DNS resolver is blocked. With `--engine openai` on a local model server, that server's port is closed to forks too. `--network` opts in on `api`, `hosted` and `openai`. `claude-code`: no outbound network, WebFetch and WebSearch denied. `forkbomb doctor` checks it. |
 | Environment | Allowlisted. No API keys or tokens reach a fork. |
 | Editor | Every path is re-checked: no `..`, no symlinks out of the clone or into `.git`, no writes through hard links. |
 | Commands | A timeout and an output cap on every command, 1 GiB per file and a cap on new processes. Background children die with it. Ctrl-C stops every fork and everything it started, and exits 130. |
 | Claude Code | `--safe-mode`, no user or project settings (no CLAUDE.md, hooks, plugins or MCP), Claude Code's own Bash sandbox, permission rules on the file tools, and the canary before first use. |
-| Judge | Runs under Forkbomb's own Seatbelt profile on every engine. Every git call on a fork's clone is sandboxed too. Edits to tests, test config, setup files and scripts the test command runs are dropped. |
+| Judge | Runs under Forkbomb's own Seatbelt profile on every engine. Every git call on a fork's clone is sandboxed too. Edits to tests, test config, setup files and scripts the test command runs are dropped. A fork whose added JavaScript or TypeScript switches the tests off from source (replacing assertions or runner globals, mocking the assertion library, exiting 0 on import) is rejected and never applied. |
 
-**Limits, stated plainly.** Seatbelt is a macOS mechanism, not a VM: forks share your kernel and your user account. System paths and anything outside `~` and the runs folder (other volumes, `/Users/Shared`, `/opt`) are readable on every engine, and on `claude-code` so is anything under `~` that isn't on the deny list. There are no CPU or memory limits, and disk use is capped per file, not per fork: the run stops every fork if the disk is about to fill up. The judge resists the common ways to game a test suite, not every one: the code under test runs inside the test process, so a patch that special-cases your tests' exact inputs, or patches the assertion library from a source file, will pass. Read the winning patch. `--no-sandbox` exists for development and is not safe. `--engine hosted` sends the task, the code forks read and tool output through the gateway. Run Forkbomb on code you'd let an agent work on.
+**Limits, stated plainly.** Seatbelt is a macOS mechanism, not a VM: forks share your kernel and your user account. System paths and anything outside `~` and the runs folder (other volumes, `/Users/Shared`, `/opt`) are readable on every engine, and on `claude-code` so is anything under `~` that isn't on the deny list. There are no CPU or memory limits, and disk use is capped per file, not per fork: the run stops every fork if the disk is about to fill up. The judge resists the common ways to game a test suite, not every one: the code under test runs inside the test process, so a patch that special-cases your tests' exact inputs, or tampers with the assertion library in a form the tamper guard doesn't recognize, will pass. Read the winning patch. `--no-sandbox` exists for development and is not safe. `--engine hosted` sends the task, the code forks read and tool output through the gateway. Run Forkbomb on code you'd let an agent work on.
 
 The full threat model is at [forkbomb.fun/security](https://forkbomb.fun/security). Reporting and scope: [SECURITY.md](SECURITY.md).
 
@@ -249,13 +250,13 @@ Key `run` flags:
 | `--forks N` | `8` | Forks per round, 1 to 64 |
 | `--rounds N` | `2` | Rounds, each grown from the best fork so far, up to 10 |
 | `--mode race\|best` | `race` | First full pass wins, or every fork finishes and the smallest passing diff wins |
-| `--engine NAME` | `claude-code` | `claude-code`, `api` or `hosted` |
+| `--engine NAME` | `claude-code` | `claude-code`, `api`, `hosted` or `openai` |
 | `--model ID` | engine default | Model for the forks (`api` default: `claude-opus-5-5`) |
 | `--effort LEVEL` | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
 | `--apply` | off | Apply the winning patch to your repo |
 | `--ui` | off | Live process tree in the browser, on port 4317 |
 | `--protect GLOB` | | Extra read-only path for forks, repeatable |
-| `--network` | off | Outbound network for forks (`api` and `hosted`) |
+| `--network` | off | Outbound network for forks (`api`, `hosted` and `openai`) |
 | `--keep-forks` | off | Keep killed forks' clones on disk |
 
 Also `--max-turns` (30), `--fork-timeout` (600 s), `--bash-timeout` (120 s), `--test-timeout` (300 s), `--concurrency` (8) and `--runs-dir`. `forkbomb --help` lists every flag. A test command that can't run (exit 127, a missing npm script) stops the run before any fork starts.
