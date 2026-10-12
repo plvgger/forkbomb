@@ -38,7 +38,7 @@ Fork time scales with file count: the 14-test demo repo forks in 1.1 ms. Up to 6
 
 ## Quickstart
 
-Needs macOS on APFS, Node 22+, Xcode Command Line Tools (`xcode-select --install`), and either Claude Code logged in with a Pro or Max plan (`claude auth login`) or an Anthropic API key. Forkbomb is not on npm yet. Run it from source:
+Needs macOS on APFS, Node 22+, Xcode Command Line Tools (`xcode-select --install`), and either Claude Code logged in with a Pro or Max plan (`claude auth login`) or an Anthropic API key. Forkbomb is packaged for npm but not published yet; CI installs the packed tarball and runs it on every pull request and push to `main`. Until it's on npm, run it from source:
 
 ```sh
 git clone https://github.com/plvgger/forkbomb
