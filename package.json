@@ -4,13 +4,36 @@
   "description": "Fork a coding agent into N sandboxed copies of your repo in milliseconds. They race, the tests judge, the losers get killed and one exits 0.",
   "type": "module",
   "license": "MIT",
+  "keywords": [
+    "coding-agent",
+    "ai-agents",
+    "claude-code",
+    "llm",
+    "cli",
+    "macos",
+    "apfs",
+    "clonefile",
+    "sandbox",
+    "seatbelt",
+    "testing"
+  ],
+  "homepage": "https://forkbomb.fun",
+  "bugs": {
+    "url": "https://github.com/plvgger/forkbomb/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plvgger/forkbomb.git"
+  },
   "bin": {
     "forkbomb": "dist/cli.js"
   },
   "files": [
-    "dist",
+    "dist/**/*.js",
+    "native",
     "ui",
-    "native"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22"
@@ -18,11 +41,16 @@
   "os": [
     "darwin"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "forkbomb": "tsx src/cli.ts"
+    "forkbomb": "tsx src/cli.ts",
+    "prepack": "rm -rf dist && npm run build",
+    "check:package": "bash scripts/check-package.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0"

@@ -8,3 +8,4 @@ web/.next
 web/.vercel
 *.tsbuildinfo
 web/next-env.d.ts
+*.tgz
