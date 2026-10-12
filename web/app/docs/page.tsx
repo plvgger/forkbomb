@@ -168,8 +168,9 @@ export default function DocsPage() {
                 <div>
                   <dt>Engines</dt>
                   <dd>
-                    <code>claude-code</code> (default, your Claude plan), <code>api</code> (API key) or{" "}
-                    <code>hosted</code> ({STATUS.hostedPoolLive ? "live" : "coming online"})
+                    <code>claude-code</code> (default, your Claude plan), <code>api</code> (API key),{" "}
+                    <code>hosted</code> ({STATUS.hostedPoolLive ? "live" : "coming online"}) or <code>openai</code> (any
+                    OpenAI-compatible server)
                   </dd>
                 </div>
                 <div>
@@ -226,6 +227,11 @@ export default function DocsPage() {
                 <a className="link" href="#hosted">
                   Hosted engine
                 </a>
+                ). For <code>--engine openai</code>, you need an OpenAI-compatible server and a model on it that can call
+                tools (see{" "}
+                <a className="link" href="#engine-openai">
+                  openai
+                </a>
                 ).
               </p>
               <p>
@@ -263,7 +269,8 @@ export default function DocsPage() {
               <H3 id="install-credentials">Credentials</H3>
               <p>
                 For the default engine, log Claude Code in once. Forkbomb uses whatever it is logged in with. For the
-                API or hosted engine, put the key in <code>{HOME}/.env</code> or export it.
+                API or hosted engine, put the key in <code>{HOME}/.env</code> or export it. The openai engine reads its
+                server and an optional key the same way.
               </p>
               <CodeBlock
                 title="Default engine: Claude Code"
@@ -272,15 +279,16 @@ export default function DocsPage() {
                 ariaLabel="Log in to Claude Code"
               />
               <CodeBlock
-                title={`${HOME}/.env (api and hosted engines only)`}
+                title={`${HOME}/.env (api, hosted and openai engines)`}
                 lang="env"
-                code={`ANTHROPIC_API_KEY=...        # --engine api\n${KEY_ENV}=${KEY_PREFIX}...   # --engine hosted`}
+                code={`ANTHROPIC_API_KEY=...        # --engine api\n${KEY_ENV}=${KEY_PREFIX}...   # --engine hosted\nOPENAI_BASE_URL=http://localhost:11434/v1   # --engine openai\nOPENAI_API_KEY=...           # --engine openai, if the server needs one`}
                 ariaLabel="Key file"
               />
               <Callout tone="info" title="Keys stay on your machine">
                 <p>
-                  The Anthropic key goes only to Anthropic, and the hosted key only to the hosted gateway. Forks run with
-                  a clean environment and never see either key.
+                  The Anthropic key goes only to Anthropic, the hosted key only to the hosted gateway, and{" "}
+                  <code>OPENAI_API_KEY</code> only to the openai engine&apos;s server. Forks run with a clean environment
+                  and never see any of them.
                 </p>
               </Callout>
             </DocSection>
@@ -458,11 +466,11 @@ export default function DocsPage() {
               id="engines"
               index={next()}
               title="Engines"
-              lede="Three ways to drive the forks. Whichever you pick, tools run on your Mac inside the sandbox, and credentials stay on your machine."
+              lede="Four ways to drive the forks. Whichever you pick, tools run on your Mac inside the sandbox, and credentials stay on your machine."
             >
               <RefTable
                 caption="Engine comparison"
-                head={["", "claude-code (default)", "api", "hosted"]}
+                head={["", "claude-code (default)", "api", "hosted", "openai"]}
                 mono={[]}
                 rows={[
                   [
@@ -470,17 +478,41 @@ export default function DocsPage() {
                     <code key="b">claude auth login</code>,
                     <code key="c">ANTHROPIC_API_KEY</code>,
                     <code key="d">{KEY_ENV}</code>,
+                    <span key="e">
+                      <code>OPENAI_API_KEY</code>, if the server needs one
+                    </span>,
                   ],
-                  [<strong key="a">Billing</strong>, "Your Pro or Max plan", "Pay as you go, with Anthropic", `Credit from burning ${SITE.ticker}`],
-                  [<strong key="a">Model</strong>, "Your Claude Code default", <code key="c">claude-opus-5-5</code>, "Forkbomb's GPU coding model"],
-                  [<strong key="a">Shell sandbox</strong>, "Claude Code's sandbox plus Forkbomb's rules", "Forkbomb's Seatbelt profile", "Forkbomb's Seatbelt profile"],
-                  [<strong key="a">--network</strong>, "Not supported yet", "Opt-in", "Opt-in"],
-                  [<strong key="a">Isolation canary</strong>, "Before the first run on each version", "Not used", "Not used"],
+                  [
+                    <strong key="a">Billing</strong>,
+                    "Your Pro or Max plan",
+                    "Pay as you go, with Anthropic",
+                    `Credit from burning ${SITE.ticker}`,
+                    "Your own hardware, or your provider",
+                  ],
+                  [
+                    <strong key="a">Model</strong>,
+                    "Your Claude Code default",
+                    <code key="c">claude-opus-5-5</code>,
+                    "Forkbomb's GPU coding model",
+                    <span key="e">
+                      Any the server serves, named with <code>--model</code>
+                    </span>,
+                  ],
+                  [
+                    <strong key="a">Shell sandbox</strong>,
+                    "Claude Code's sandbox plus Forkbomb's rules",
+                    "Forkbomb's Seatbelt profile",
+                    "Forkbomb's Seatbelt profile",
+                    "Forkbomb's Seatbelt profile",
+                  ],
+                  [<strong key="a">--network</strong>, "Not supported yet", "Opt-in", "Opt-in", "Opt-in"],
+                  [<strong key="a">Isolation canary</strong>, "Before the first run on each version", "Not used", "Not used", "Not used"],
                   [
                     <strong key="a">Status</strong>,
                     "Live",
                     "Live",
                     STATUS.hostedPoolLive ? "Live" : <span key="d" className={s.soon}>Coming online</span>,
+                    "Live",
                   ],
                 ]}
               />
@@ -525,6 +557,46 @@ export default function DocsPage() {
                   Hosted engine
                 </a>
                 .
+              </p>
+
+              <H3 id="engine-openai">openai</H3>
+              <p>
+                The same tool loop and the same sandbox as <code>api</code>, on any OpenAI-compatible server you name:
+                Ollama, LM Studio, vLLM, llama.cpp or OpenRouter. Point <code>--base-url</code> (or{" "}
+                <code>OPENAI_BASE_URL</code>) at its API root, usually ending in <code>/v1</code>, and pass{" "}
+                <code>--model</code>, which this engine requires. <code>OPENAI_API_KEY</code> is sent if it is set, to
+                that server only. The URL must be <code>https</code>, or plain <code>http</code> to localhost.
+              </p>
+              <ul>
+                <li>
+                  Before any fork starts, Forkbomb asks the server for its model list and stops if the server can&apos;t
+                  be reached, rejects the key or doesn&apos;t list the model.
+                </li>
+                <li>
+                  Forks need a model that can call tools. A server or model without tool calling stops the run at the
+                  first request, with what to change.
+                </li>
+                <li>
+                  Forkbomb can&apos;t see what the server bills, so a run&apos;s cost is reported as unknown. With a
+                  remote provider, the task, the code forks read and tool output go to that provider.
+                </li>
+              </ul>
+              <CodeBlock
+                title="Ollama on this machine"
+                lang="sh"
+                code={`$ ollama pull qwen2.5-coder:7b\n$ ${BIN} run ./my-repo --task "fix the failing tests" --test "npm test" \\\n    --engine openai --base-url http://localhost:11434/v1 --model qwen2.5-coder:7b`}
+                ariaLabel="Race on a local Ollama model"
+              />
+              <CodeBlock
+                title="OpenRouter"
+                lang="sh"
+                code={`$ export OPENAI_API_KEY=sk-or-...\n$ ${BIN} run ./my-repo --task "fix the failing tests" --test "npm test" \\\n    --engine openai --base-url https://openrouter.ai/api/v1 --model qwen/qwen3-coder`}
+                ariaLabel="Race on an OpenRouter model"
+              />
+              <p>
+                Ollama&apos;s default context window depends on the machine&apos;s memory and can be as small as 4k
+                tokens, which a fork&apos;s history outgrows fast. Start it with a bigger one, for example{" "}
+                <code>OLLAMA_CONTEXT_LENGTH=32768 ollama serve</code>.
               </p>
             </DocSection>
 
@@ -1505,7 +1577,9 @@ export default function DocsPage() {
                   >
                     <p>
                       GPU workers shut down after a quiet spell, and the first request after that waits while one starts
-                      and loads the model. Nothing was charged. Retry in a minute, or use one of the other engines.
+                      and loads the model. While it waits, the run says so once, after 20 s, then gives the wait so far
+                      about once a minute until the first answer arrives. Nothing was charged for a request that failed
+                      this way. Retry in a minute, or use one of the other engines.
                     </p>
                   </Issue>
                 ) : (
@@ -1519,6 +1593,27 @@ export default function DocsPage() {
                     </p>
                   </Issue>
                 )}
+                <Issue
+                  id="ts-openai-model"
+                  title="Model not on the server"
+                  msg={`${BIN}: the server at localhost:11434 has no model "qwen2.5-coder:7b". It lists llama3:latest. Pass one it lists to --model; on Ollama, pull it first: ollama pull qwen2.5-coder:7b`}
+                >
+                  <p>
+                    Only applies to <code>--engine openai</code>. Pass an id from the list, or pull the model first. The
+                    check runs before any fork starts, so nothing else happened.
+                  </p>
+                </Issue>
+                <Issue
+                  id="ts-openai-tools"
+                  title="Model without tool calling"
+                  msg="error: the server at localhost:11434 can't do tool calls with llama3 (registry.ollama.ai/library/llama3:latest does not support tools). Forks need tool calling: …"
+                >
+                  <p>
+                    Forks work through two tools, so the model must support tool calling. On Ollama, pick a model with
+                    the &quot;tools&quot; tag. On vLLM, start the server with <code>--enable-auto-tool-choice</code> and
+                    a <code>--tool-call-parser</code>; on llama.cpp, with <code>--jinja</code>.
+                  </p>
+                </Issue>
                 <Issue
                   id="ts-network"
                   title="--network with Claude Code"

@@ -70,10 +70,13 @@ export const REQUIREMENTS = [
   "macOS on an APFS volume",
   "Node 22 or newer",
   "Xcode Command Line Tools",
-  "Claude Code logged in (Pro or Max plan), or an Anthropic API key",
+  "Claude Code logged in (Pro or Max plan), an Anthropic API key, or an OpenAI-compatible server",
 ] as const;
 
-/** Engines the CLI can drive. `hosted` is paid with credit from burning $FORKBOMB: usable once the pool is up and burns are open. */
+/**
+ * Engines the CLI can drive. `hosted` is paid with credit from burning $FORKBOMB: usable once the pool is up and burns
+ * are open. `openai` runs on any OpenAI-compatible server the user names (src/engines/openai.ts).
+ */
 export const ENGINES = [
   {
     id: "claude-code",
@@ -92,6 +95,12 @@ export const ENGINES = [
     name: "Forkbomb hosted",
     pays: "Credit from burning $FORKBOMB",
     live: STATUS.hostedPoolLive && STATUS.tokenLive,
+  },
+  {
+    id: "openai",
+    name: "OpenAI-compatible",
+    pays: "Your own server, or your provider's key",
+    live: true,
   },
 ] as const;
 

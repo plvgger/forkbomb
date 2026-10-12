@@ -527,7 +527,7 @@ export default function TokenPage() {
 
         <div className={s.engines}>
           <div className={s.enginesHead}>
-            <h3 className={s.enginesTitle}>Three engines. Two of them never touch the token.</h3>
+            <h3 className={s.enginesTitle}>Four engines. Three of them never touch the token.</h3>
             <p className={s.enginesBody}>
               Self-hosting stays free and {SITE.license}. Pick an engine per run; {hosted ? hosted.name : "hosted"} is
               the only one paid with {SITE.ticker} credit.
