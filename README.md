@@ -47,7 +47,7 @@ npm install && npm run build && npm link
 forkbomb doctor
 ```
 
-Race the bundled demo. `examples/calc` is the repo from the [recorded race](#a-recorded-race): 14 tests, 10 failing.
+Race the bundled demo. `examples/calc` is the repo from the [recorded race](#a-recorded-race): 14 tests, 10 failing. Three more broken repos, each with its baseline and run command, are listed in [`examples/`](examples/README.md).
 
 ```sh
 forkbomb run ./examples/calc \
